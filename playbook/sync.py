@@ -7,6 +7,7 @@ labelled playbook, which merges itself once its checks pass.
 
 from __future__ import annotations
 
+import json
 import tempfile
 from pathlib import Path
 
@@ -119,8 +120,21 @@ def sync_repo(repo: str, dry_run: bool = False) -> str | None:
             "playbook",
             cwd=root,
         )
-        merged = run(["gh", "pr", "merge", url, "--auto", "--squash"], check=False, capture=True)
-        if merged.returncode != 0:
-            warn(f"{repo}: couldn't turn on auto-merge; land {url} by hand")
+        # Without a ruleset, auto-merge has nothing to wait for and would merge
+        # before the checks ran; such PRs are landed with playbook finish.
+        if has_required_checks(repo):
+            merged = run(["gh", "pr", "merge", url, "--auto", "--squash"], check=False, capture=True)
+            if merged.returncode != 0:
+                warn(f"{repo}: couldn't turn on auto-merge; land {url} with playbook finish")
+        else:
+            warn(f"{repo} has no ruleset on main (private repos need GitHub Pro); land {url} with playbook finish")
         say(f"{repo}: opened {url}")
         return url
+
+
+def has_required_checks(repo: str) -> bool:
+    """Whether main has a ruleset that makes PRs wait for required checks."""
+    result = run(["gh", "api", f"repos/{repo}/rules/branches/main"], check=False, capture=True)
+    if result.returncode != 0:
+        return False
+    return any(rule.get("type") == "required_status_checks" for rule in json.loads(result.stdout or "[]"))
