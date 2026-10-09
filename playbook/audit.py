@@ -25,7 +25,10 @@ def audit_repo(repo: str) -> list[str]:
         problems.append(f"the default branch is {info['default_branch']}, not main")
     for key, wanted in REPO_SETTINGS.items():
         if info.get(key) != wanted:
-            problems.append(f"setting {key} is {info.get(key)!r}, not {wanted!r}")
+            if key == "allow_auto_merge" and info.get("private"):
+                problems.append("auto-merge on private repos needs GitHub Pro")
+            else:
+                problems.append(f"setting {key} is {info.get(key)!r}, not {wanted!r}")
 
     labels = {label["name"] for label in gh_json("api", f"repos/{repo}/labels?per_page=100") or []}
     missing_labels = sorted(set(LABELS) - labels)

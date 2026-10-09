@@ -13,7 +13,7 @@ The facts about this repo live in `.github/playbook.toml`. Everything in this se
 4. **Open the PR** with `gh pr create --base main`. Its title becomes the commit on `main`, so it follows the commit style below. Put `Closes #<issue>` in the body when the PR fully resolves the issue.
 5. **Land it with `playbook finish`.** It waits for the required checks, merges `main` into the branch if `main` has moved on, squash-merges, removes the worktree and the branch, pulls `main`, and confirms the issue is closed. If a check fails, fix it on the branch and run `playbook finish` again.
 
-Sessions that only read, plan or answer questions need no issue and no worktree.
+Sessions that don't change this repo's files (reading, planning, answering questions, running its tools) need no issue and no worktree.
 
 **Never** commit or push to `main` (hooks and a GitHub ruleset refuse it), rebase a branch that's already pushed, or force-push. To catch up with `main`, merge it into your branch.
 

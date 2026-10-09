@@ -1,6 +1,6 @@
 # Checks that a PR title follows the commit style, since the title becomes the
 # squash commit on main: a lowercase verb first, plain words, no "type:" prefix
-# and no full stop. Dependabot's "Bump ..." titles are lowercased in place.
+# and no full stop. Dependabot's titles are fixed in place ("npm(deps): Bump x" becomes "bump x").
 name: title
 
 on:
@@ -24,11 +24,16 @@ jobs:
           PR: ${{ github.event.pull_request.html_url }}
           GH_TOKEN: ${{ github.token }}
         run: |
-          if [[ "$AUTHOR" == "dependabot[bot]" && "$TITLE" =~ ^[A-Z] ]]; then
-            TITLE="$(printf '%s' "${TITLE:0:1}" | tr '[:upper:]' '[:lower:]')${TITLE:1}"
-            gh pr edit "$PR" --title "$TITLE"
+          prefix='^[a-zA-Z]+(\([^)]*\))?!?: '
+          if [[ "$AUTHOR" == "dependabot[bot]" ]]; then
+            fixed="$TITLE"
+            [[ "$fixed" =~ $prefix ]] && fixed="${fixed#"${BASH_REMATCH[0]}"}"
+            fixed="$(printf '%s' "${fixed:0:1}" | tr '[:upper:]' '[:lower:]')${fixed:1}"
+            if [[ "$fixed" != "$TITLE" ]]; then
+              gh pr edit "$PR" --title "$fixed"
+              TITLE="$fixed"
+            fi
           fi
-          prefix='^[a-z]+(\([^)]*\))?!?: '
           problems=()
           [[ "$TITLE" =~ ^[a-z] ]] || problems+=("start with a lowercase verb, such as add, fix or remove")
           [[ "$TITLE" =~ \.$ ]] && problems+=("drop the full stop at the end")
