@@ -110,6 +110,13 @@ def environment_secrets(repo: str) -> set[str] | None:
     return {secret["name"] for secret in json.loads(result.stdout).get("secrets", [])}
 
 
+def repository_secrets(repo: str) -> set[str]:
+    result = _api("GET", f"repos/{repo}/actions/secrets", check=False)
+    if result.returncode != 0:
+        return set()
+    return {secret["name"] for secret in json.loads(result.stdout).get("secrets", [])}
+
+
 def missing_release_setup(repo: str, config: Config) -> list[str]:
     """What a published repo still needs before a release can publish everywhere."""
     release = config.release
@@ -120,6 +127,9 @@ def missing_release_setup(repo: str, config: Config) -> list[str]:
     if secrets is None:
         problems.append("the release environment doesn't exist (run: playbook settings)")
         secrets = set()
+    # Jobs in the release environment also see repo-level secrets; audit asks
+    # for those to move into the environment, but they work meanwhile.
+    secrets |= repository_secrets(repo)
     if "homebrew" in release.channels and TAP_SECRET not in secrets:
         problems.append(f"{TAP_SECRET} is missing from the release environment (run: playbook settings)")
     if "winget" in release.channels and WINGET_SECRET not in secrets:
