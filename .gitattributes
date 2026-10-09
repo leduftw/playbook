@@ -1,0 +1,6 @@
+* text=auto
+.githooks/* text eol=lf
+templates/githooks/* text eol=lf
+installers/* text eol=lf
+*.sh text eol=lf
+bin/* text eol=lf

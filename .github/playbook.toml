@@ -1,0 +1,10 @@
+# Facts about this repo for leduftw/playbook. Everything else comes from the playbook.
+name = "playbook"
+published = false
+
+[[check]]
+stack = "python"
+lint = [
+  "uvx ruff check .",
+  "uvx --from actionlint-py actionlint",
+]

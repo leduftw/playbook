@@ -1,0 +1,8 @@
+# Managed by leduftw/playbook @@major@@. Change it there, not here.
+# Release notes list the PRs merged since the last release, minus housekeeping.
+changelog:
+  exclude:
+    labels:
+      - dependencies
+      - release
+      - playbook

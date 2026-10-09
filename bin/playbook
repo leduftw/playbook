@@ -1,0 +1,14 @@
+#!/usr/bin/env python3
+"""The playbook command; see `playbook --help`."""
+
+import sys
+from pathlib import Path
+
+if sys.version_info < (3, 11):
+    sys.exit("playbook needs Python 3.11 or newer")
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from playbook.cli import main  # noqa: E402
+
+sys.exit(main())

@@ -1,0 +1,406 @@
+# The shared pipeline. Every repo that follows the playbook calls it from its
+# managed .github/workflows/playbook.yml, pinned to a major version (@v1).
+#
+# On every PR it runs the repo's checks. On a PR that changes the version of a
+# published repo it also builds, smoke-tests and dry-runs every release channel.
+# When that PR lands on main it publishes the release and updates the channels.
+name: pipeline
+
+on:
+  workflow_call:
+    inputs:
+      playbook-ref:
+        description: The playbook version whose scripts this run uses; it matches the @ref used to call this workflow.
+        type: string
+        required: true
+    outputs:
+      released:
+        description: true when this run published a release.
+        value: ${{ jobs.publish.outputs.released }}
+      version:
+        description: The version in the repo's project file.
+        value: ${{ jobs.plan.outputs.version }}
+      sha:
+        description: The commit a published release was built from.
+        value: ${{ jobs.publish.outputs.sha }}
+
+permissions:
+  contents: read
+
+env:
+  PLAYBOOK_REF: ${{ inputs.playbook-ref }}
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_NOLOGO: "1"
+  HOMEBREW_NO_AUTO_UPDATE: "1"
+  HOMEBREW_NO_INSTALL_CLEANUP: "1"
+  HOMEBREW_NO_ENV_HINTS: "1"
+
+jobs:
+  plan:
+    name: plan
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      name: ${{ steps.plan.outputs.name }}
+      published: ${{ steps.plan.outputs.published }}
+      mode: ${{ steps.plan.outputs.mode }}
+      version: ${{ steps.plan.outputs.version }}
+      tag: ${{ steps.plan.outputs.tag }}
+      checks: ${{ steps.plan.outputs.checks }}
+      build: ${{ steps.plan.outputs.build }}
+      homebrew: ${{ steps.plan.outputs.homebrew }}
+      winget: ${{ steps.plan.outputs.winget }}
+      registry: ${{ steps.plan.outputs.registry }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Fetch the playbook
+        shell: bash
+        run: &fetch |
+          dir="$RUNNER_TEMP/playbook"
+          rm -rf "$dir"
+          git init -q "$dir"
+          git -C "$dir" fetch -q --depth 1 https://github.com/leduftw/playbook "$PLAYBOOK_REF"
+          git -C "$dir" checkout -q FETCH_HEAD
+          echo "PLAYBOOK=$dir" >> "$GITHUB_ENV"
+          echo "playbook $(cat "$dir/VERSION") at $(git -C "$dir" rev-parse --short HEAD)"
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+      - name: Plan
+        id: plan
+        shell: bash
+        run: python "$PLAYBOOK/bin/playbook" ci plan
+
+  check:
+    name: ${{ matrix.label }}
+    needs: plan
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.checks) }}
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Linux packages
+        if: runner.os == 'Linux' && matrix.apt != ''
+        shell: bash
+        run: sudo apt-get update -q && sudo apt-get install -q -y --no-install-recommends ${{ matrix.apt }}
+      - name: Set up Rust
+        if: matrix.stack == 'rust'
+        uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          toolchain: stable
+          components: ${{ matrix.rust_components }}
+      - name: Cache Rust builds
+        if: matrix.stack == 'rust'
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: ${{ matrix.dir }}
+      - name: Set up .NET
+        if: matrix.stack == 'dotnet'
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: ${{ matrix.global_json }}
+          dotnet-version: ${{ matrix.global_json == '' && '10.0.x' || '' }}
+      - name: Set up Python
+        if: matrix.stack == 'python'
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: ${{ matrix.python_version_file }}
+          python-version: ${{ matrix.python_version_file == '' && '3.13' || '' }}
+      - name: Set up uv
+        if: matrix.stack == 'python'
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - name: Set up Node
+        if: matrix.stack == 'node'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: ${{ matrix.node_version_file }}
+          node-version: ${{ matrix.node_version_file == '' && 'lts/*' || '' }}
+      - name: Install ${{ matrix.node_manager }}
+        if: matrix.stack == 'node' && matrix.node_manager != 'npm'
+        shell: bash
+        working-directory: ${{ matrix.dir }}
+        run: |
+          spec=$(node -p "(require('./package.json').packageManager || '${{ matrix.node_manager }}').split('+')[0]")
+          npm install --global "$spec"
+      - name: Check
+        shell: bash
+        working-directory: ${{ matrix.dir }}
+        env:
+          SCRIPT: ${{ matrix.script }}
+        run: eval "$SCRIPT"
+      - name: Note skipped steps
+        if: matrix.skipped != ''
+        shell: bash
+        env:
+          SKIPPED: ${{ matrix.skipped }}
+        run: echo "::notice title=skipped by playbook.toml::$SKIPPED"
+
+  build:
+    name: build ${{ matrix.target }}
+    needs: plan
+    if: needs.plan.outputs.mode != 'none'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.build) }}
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Fetch the playbook
+        shell: bash
+        run: *fetch
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+      - name: Install Linux packages
+        if: runner.os == 'Linux' && matrix.apt != ''
+        shell: bash
+        run: sudo apt-get update -q && sudo apt-get install -q -y --no-install-recommends ${{ matrix.apt }}
+      - name: Set up Rust
+        if: matrix.stack == 'rust'
+        uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          toolchain: stable
+          targets: ${{ matrix.rust_target }}
+      - name: Cache Rust builds
+        if: matrix.stack == 'rust'
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: ${{ matrix.target }}
+      - name: Set up .NET
+        if: matrix.stack == 'dotnet'
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: ${{ matrix.global_json }}
+          dotnet-version: ${{ matrix.global_json == '' && '10.0.x' || '' }}
+      - name: Build and package
+        shell: bash
+        env:
+          PLAYBOOK_VARS: ${{ toJSON(vars) }}
+        run: python "$PLAYBOOK/bin/playbook" ci build --target "${{ matrix.target }}" --version "${{ needs.plan.outputs.version }}" --out dist
+      - name: Smoke-test the archive
+        shell: bash
+        run: python "$PLAYBOOK/bin/playbook" ci smoke --target "${{ matrix.target }}" --version "${{ needs.plan.outputs.version }}" --dist dist
+      - name: Smoke-test the installer
+        shell: bash
+        run: python "$PLAYBOOK/bin/playbook" ci smoke-installer --target "${{ matrix.target }}" --version "${{ needs.plan.outputs.version }}" --dist dist
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 7
+
+  homebrew-dry-run:
+    name: homebrew dry run
+    needs: [plan, build]
+    if: needs.plan.outputs.mode != 'none' && needs.plan.outputs.homebrew == 'true'
+    runs-on: macos-15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Fetch the playbook
+        shell: bash
+        run: *fetch
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: dist
+      - name: Install the formula from a local tap
+        shell: bash
+        run: python "$PLAYBOOK/bin/playbook" ci homebrew --version "${{ needs.plan.outputs.version }}" --dist dist --dry-run
+
+  channels-dry-run:
+    name: channels dry run
+    needs: plan
+    if: needs.plan.outputs.mode != 'none'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Fetch the playbook
+        shell: bash
+        run: *fetch
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+      - name: Install Linux packages
+        if: needs.plan.outputs.registry == 'crates-io'
+        shell: bash
+        run: python "$PLAYBOOK/bin/playbook" ci apt --release
+      - name: Set up Rust
+        if: needs.plan.outputs.registry == 'crates-io'
+        uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          toolchain: stable
+      - name: Set up .NET
+        if: needs.plan.outputs.registry == 'nuget'
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: ${{ hashFiles('global.json') != '' && 'global.json' || '' }}
+          dotnet-version: ${{ hashFiles('global.json') == '' && '10.0.x' || '' }}
+      - name: Dry-run the channels
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python "$PLAYBOOK/bin/playbook" ci channels --version "${{ needs.plan.outputs.version }}" --dry-run
+
+  checks:
+    name: checks
+    needs: [plan, check, build, homebrew-dry-run, channels-dry-run]
+    if: always()
+    runs-on: ubuntu-24.04
+    permissions: {}
+    steps:
+      - name: Require every job to pass
+        shell: bash
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          jq -r 'to_entries[] | "\(.key): \(.value.result)"' <<< "$RESULTS"
+          if jq -e 'to_entries | any(.value.result == "failure" or .value.result == "cancelled")' <<< "$RESULTS" >/dev/null; then
+            echo "::error::a job above failed; this PR can't merge until it passes"
+            exit 1
+          fi
+
+  publish:
+    name: publish ${{ needs.plan.outputs.tag }}
+    needs: [plan, checks]
+    if: needs.plan.outputs.mode == 'publish'
+    runs-on: ubuntu-24.04
+    environment: release
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    outputs:
+      released: ${{ steps.release.outputs.released }}
+      sha: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Fetch the playbook
+        shell: bash
+        run: *fetch
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: dist
+      - name: Assemble the release files
+        shell: bash
+        run: python "$PLAYBOOK/bin/playbook" ci assemble --version "${{ needs.plan.outputs.version }}" --dist dist
+      - name: Record provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/*
+      - name: Publish the release
+        id: release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python "$PLAYBOOK/bin/playbook" ci release --version "${{ needs.plan.outputs.version }}" --dist dist --sha "${{ github.sha }}"
+
+  homebrew:
+    name: update Homebrew
+    needs: [plan, publish]
+    if: needs.plan.outputs.homebrew == 'true' && needs.publish.outputs.released == 'true'
+    runs-on: macos-15
+    environment: release
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Fetch the playbook
+        shell: bash
+        run: *fetch
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: dist
+      - name: Check out the tap
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: leduftw/homebrew-tap
+          ssh-key: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
+          path: .tap
+      - name: Update the formula
+        shell: bash
+        run: python "$PLAYBOOK/bin/playbook" ci homebrew --version "${{ needs.plan.outputs.version }}" --dist dist --tap .tap
+
+  winget:
+    name: update WinGet
+    needs: [plan, publish]
+    if: needs.plan.outputs.winget == 'true' && needs.publish.outputs.released == 'true'
+    runs-on: windows-2025
+    environment: release
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Fetch the playbook
+        shell: bash
+        run: *fetch
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+      - name: Submit the WinGet update
+        shell: bash
+        env:
+          WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
+        run: python "$PLAYBOOK/bin/playbook" ci winget --version "${{ needs.plan.outputs.version }}"
+
+  dependabot:
+    name: dependabot
+    if: github.event_name == 'pull_request' && github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Read the update
+        id: update
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+      - name: Merge minor and patch updates once checks pass
+        if: steps.update.outputs.update-type != 'version-update:semver-major'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.html_url }}
+        run: |
+          if ! gh pr merge --auto --squash "$PR"; then
+            echo "::warning::couldn't turn on auto-merge; it needs auto-merge allowed and a ruleset on main (playbook settings)"
+          fi

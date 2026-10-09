@@ -1,0 +1,36 @@
+# Releases the playbook itself when a merged PR changes VERSION: publishes
+# vX.Y.Z and moves the vX tag that every repo pins, so the change reaches them
+# on their next run.
+name: self-release
+
+on:
+  push:
+    branches: [main]
+    paths: [VERSION]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: self-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: release the playbook
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+      - name: Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python bin/playbook ci self-release --sha "${{ github.sha }}"

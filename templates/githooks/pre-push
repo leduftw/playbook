@@ -1,0 +1,20 @@
+#!/bin/sh
+# Managed by leduftw/playbook. Change it there, not here.
+#
+# Blocks pushes to main: main only moves when a PR is merged. Creating main for
+# the first time (a new repo's initial push) is the one exception.
+#
+# Activate per clone with: git config core.hooksPath .githooks
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [ "$remote_ref" = refs/heads/main ] || continue
+  case $remote_sha in
+    *[!0]*) ;;
+    *) continue ;;
+  esac
+  echo "pre-push: pushing to main is blocked." >&2
+  echo "  Push your branch and merge it through a PR (playbook finish)." >&2
+  exit 1
+done
+
+exit 0

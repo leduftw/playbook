@@ -1,0 +1,45 @@
+# Managed by leduftw/playbook @@major@@. Change it there, not here:
+# https://github.com/leduftw/playbook
+name: playbook
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: playbook-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  playbook:
+    uses: @@pipeline@@
+    with:
+      playbook-ref: @@ref@@
+    permissions:
+      contents: write
+      pull-requests: write
+@@#published@@
+      id-token: write
+      attestations: write
+@@/published@@
+@@#registry@@
+
+  registry:
+    needs: playbook
+    if: needs.playbook.outputs.released == 'true'
+    runs-on: ubuntu-24.04
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: @@registry_action@@
+        with:
+          sha: ${{ needs.playbook.outputs.sha }}
+          playbook-ref: @@ref@@
+@@/registry@@

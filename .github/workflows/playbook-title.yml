@@ -1,0 +1,16 @@
+# Managed by leduftw/playbook v1. Change it there, not here:
+# https://github.com/leduftw/playbook
+name: playbook-title
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  playbook:
+    uses: ./.github/workflows/title.yml
+    permissions:
+      pull-requests: write

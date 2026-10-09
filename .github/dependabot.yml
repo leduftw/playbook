@@ -1,0 +1,23 @@
+# Managed by leduftw/playbook v1. Change it there, not here.
+# Minor and patch updates are grouped and merge themselves once checks pass;
+# each major update arrives as its own PR for an agent session to handle.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      timezone: Europe/Belgrade
+    labels:
+      - dependencies
+    groups:
+      minor-and-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+    # The playbook itself moves through playbook sync, not Dependabot.
+    ignore:
+      - dependency-name: "leduftw/playbook*"

@@ -1,0 +1,42 @@
+# Checks that a PR title follows the commit style, since the title becomes the
+# squash commit on main: a lowercase verb first, plain words, no "type:" prefix
+# and no full stop. Dependabot's "Bump ..." titles are lowercased in place.
+name: title
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  title:
+    name: title
+    runs-on: ubuntu-24.04
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Check the PR title
+        shell: bash
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [[ "$AUTHOR" == "dependabot[bot]" && "$TITLE" =~ ^[A-Z] ]]; then
+            TITLE="$(printf '%s' "${TITLE:0:1}" | tr '[:upper:]' '[:lower:]')${TITLE:1}"
+            gh pr edit "$PR" --title "$TITLE"
+          fi
+          prefix='^[a-z]+(\([^)]*\))?!?: '
+          problems=()
+          [[ "$TITLE" =~ ^[a-z] ]] || problems+=("start with a lowercase verb, such as add, fix or remove")
+          [[ "$TITLE" =~ \.$ ]] && problems+=("drop the full stop at the end")
+          [[ "$TITLE" =~ $prefix ]] && problems+=("drop the \"type:\" prefix")
+          if ((${#problems[@]})); then
+            echo "::error title=PR title::\"$TITLE\" doesn't follow the commit style"
+            printf -- '- %s\n' "${problems[@]}"
+            echo "For example: fix Windows installer replacement"
+            exit 1
+          fi
+          echo "\"$TITLE\" follows the commit style"
