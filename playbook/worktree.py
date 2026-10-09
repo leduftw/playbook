@@ -87,12 +87,48 @@ def start(issue: int) -> Path:
     return path
 
 
-def _has_required_checks(root: Path) -> bool:
-    """Whether main has a ruleset with required checks (private repos need GitHub Pro)."""
-    from .util import repository
+def wait_for_checks(url: str, timeout: int = 3600) -> None:
+    """Wait until the playbook's two checks have passed on the PR's latest commit.
 
-    rules = gh_json("api", f"repos/{repository(root)}/rules/branches/main", cwd=root) or []
-    return any(rule.get("type") == "required_status_checks" for rule in rules)
+    They're waited for by name: the summary check only appears once the jobs
+    it waits for are done, so "every reported check passed" can be true while
+    it doesn't exist yet. Repos without a ruleset (private ones before GitHub
+    Pro) get the same wait.
+    """
+    from .settings import REQUIRED_CHECKS
+
+    deadline = time.monotonic() + timeout
+    shown = None
+    while True:
+        rollup = gh_json("pr", "view", url, "--json", "statusCheckRollup")["statusCheckRollup"] or []
+        latest: dict[str, dict] = {}
+        for item in rollup:  # a re-run leaves several entries; the newest counts
+            name = item.get("name") or item.get("context")
+            if name not in latest or (item.get("startedAt") or "") >= (latest[name].get("startedAt") or ""):
+                latest[name] = item
+        states = {}
+        for name in REQUIRED_CHECKS:
+            item = latest.get(name)
+            if item is None:
+                states[name] = "not started"
+            elif item.get("status", "COMPLETED") != "COMPLETED":
+                states[name] = "running"
+            else:
+                states[name] = (item.get("conclusion") or item.get("state") or "").lower()
+        failed = {n: s for n, s in states.items() if s not in ("success", "running", "not started")}
+        if failed:
+            details = ", ".join(f"{n}: {s}" for n, s in failed.items())
+            raise Failure(f"{details}; fix it on the branch, push, and run finish again")
+        if all(state == "success" for state in states.values()):
+            say("checks passed: " + ", ".join(REQUIRED_CHECKS))
+            return
+        summary = ", ".join(f"{n}: {s}" for n, s in states.items())
+        if summary != shown:
+            say(f"waiting: {summary}")
+            shown = summary
+        if time.monotonic() > deadline:
+            raise Failure(f"the checks didn't finish within {timeout // 60} minutes")
+        time.sleep(15)
 
 
 def _pr(cwd: Path, pr: str | None) -> dict:
@@ -131,13 +167,14 @@ def finish(pr: str | None = None) -> None:
             say("merged the latest main into the branch; checks start again")
             time.sleep(5)
 
-        required = ["--required"] if _has_required_checks(root) else []
-        say(f"waiting for the {'required ' if required else ''}checks on {url}")
-        time.sleep(10)  # give GitHub a moment to register the checks of a fresh push
-        checks = run(["gh", "pr", "checks", url, "--watch", *required, "--fail-fast", "--interval", "15"], check=False)
-        if checks.returncode != 0:
-            raise Failure("a required check failed; fix it on the branch, push, and run finish again")
-        run(["gh", "pr", "merge", url, "--squash"])
+        wait_for_checks(url)
+        for attempt in range(1, 6):
+            merged = run(["gh", "pr", "merge", url, "--squash"], check=False, capture=True)
+            if merged.returncode == 0:
+                break
+            if attempt == 5:
+                raise Failure(f"GitHub refused to merge {url}: {merged.stderr.strip()}")
+            time.sleep(10)
         for _ in range(30):
             if _pr(cwd, url)["state"] == "MERGED":
                 break

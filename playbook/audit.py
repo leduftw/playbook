@@ -12,7 +12,7 @@ from pathlib import Path
 
 from . import render, version
 from .config import ConfigError, load
-from .settings import LABELS, REPO_SETTINGS, REQUIRED_CHECKS, find_ruleset, missing_release_setup
+from .settings import LABELS, REPO_SETTINGS, REQUIRED_CHECKS, find_ruleset, missing_release_setup, ruleset_body
 from .sync import _is_playbook, clone
 from .util import Failure, gh_json, run, say
 
@@ -45,6 +45,15 @@ def audit_repo(repo: str) -> list[str]:
                 problems.append(f"the ruleset requires {sorted(contexts)}, not {REQUIRED_CHECKS}")
             if ruleset.get("enforcement") != "active":
                 problems.append("the ruleset isn't active")
+            wanted = {rule["type"]: rule.get("parameters") for rule in ruleset_body()["rules"]}
+            for rule in ruleset.get("rules", []):
+                expected = wanted.get(rule["type"])
+                if rule["type"] == "pull_request" and expected:
+                    for key, value in expected.items():
+                        if rule["parameters"].get(key) != value:
+                            problems.append(
+                                f"the ruleset's pull_request rule has {key}={rule['parameters'].get(key)!r}"
+                            )
     except Failure as error:
         problems.append(str(error))
 
