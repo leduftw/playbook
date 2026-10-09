@@ -63,6 +63,10 @@ TARGETS = {
 # checks use the current LTS.
 CHECK_RUNNERS = {"linux": "ubuntu-24.04", "macos": "macos-15", "windows": "windows-2025"}
 
+# Tools the checks run, pinned so a new release of one can't turn every repo
+# red overnight; they move with a playbook release.
+RUFF = "ruff@0.17.0"
+
 # Files a self-contained .NET app must carry beside its own licence.
 DOTNET_NOTICES = {
     "LICENSE.txt": "DOTNET-LICENSE.txt",
@@ -97,11 +101,11 @@ def check_commands(root: Path, check: Check) -> dict[str, list[str]]:
             "test": [f"dotnet test {target} --configuration Release --no-restore"],
         }
     elif check.stack == "python":
-        tests = ["python -m unittest discover -s tests -t ."] if (directory / "tests").is_dir() else []
+        tests = ["python -m unittest discover -s tests"] if (directory / "tests").is_dir() else []
         defaults = {
             "prepare": [],
-            "format": ["uvx ruff format --check ."],
-            "lint": ["uvx ruff check ."],
+            "format": [f"uvx {RUFF} format --check ."],
+            "lint": [f"uvx {RUFF} check ."],
             "test": tests,
         }
     else:  # node
