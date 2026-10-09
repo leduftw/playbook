@@ -14,8 +14,8 @@ import time
 import unicodedata
 from pathlib import Path
 
-from .config import load
-from .util import Failure, gh, gh_json, git, run, say, warn
+from .config import ConfigError, load
+from .util import Failure, gh, gh_json, git, repository, run, say, warn
 
 WORKTREES = Path(os.environ.get("PLAYBOOK_WORKTREES", Path.home() / "Developer" / ".worktrees"))
 
@@ -53,16 +53,24 @@ def ensure_hooks(root: Path) -> None:
         say("turned on the repo's git hooks (core.hooksPath=.githooks)")
 
 
+def repo_name(root: Path) -> str:
+    """The name worktrees are grouped under: playbook.toml's, else the repo's own."""
+    try:
+        return load(root).name
+    except ConfigError:
+        return repository(root).split("/")[1]
+
+
 def start(issue: int) -> Path:
     root = primary_checkout()
-    config = load(root)
+    name = repo_name(root)
     ensure_hooks(root)
     data = gh_json("issue", "view", str(issue), "--json", "title,state,url", cwd=root)
     if data["state"] != "OPEN":
         raise Failure(f"issue #{issue} is {data['state'].lower()}; reopen it or pick an open one")
     slug = f"{issue}-{slugify(data['title'])}"
     branch = f"dev/{github_user()}/{slug}"
-    path = WORKTREES / config.name / slug
+    path = WORKTREES / name / slug
     if path.exists():
         say(f"{path} already exists; continue there")
         print(path)
