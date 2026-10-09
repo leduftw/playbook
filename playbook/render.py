@@ -66,7 +66,7 @@ def managed_files(root: Path, config: Config, self_repo: bool = False) -> dict[s
         "ref": script_ref,
         "registry_action": f"{REPOSITORY}/.github/actions/registry@{ref}",
     }
-    flags = {"published": config.published, "registry": bool(registry)}
+    flags = {"registry": bool(registry)}
 
     files = {
         ".github/workflows/playbook.yml": template("workflows/playbook.yml", values, flags),

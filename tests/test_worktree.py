@@ -10,6 +10,7 @@ class SlugTest(unittest.TestCase):
         )
         self.assertEqual(slugify("Ünïcode & symbols!!"), "unicode-symbols")
         self.assertEqual(slugify("!!!"), "change")
+        self.assertEqual(slugify("pipeline doesn't start"), "pipeline-doesnt-start")
 
     def test_long_titles_are_cut_at_a_word_boundary(self):
         slug = slugify("Accept Binance Transfer rows and keep their Send dedup identity forever")

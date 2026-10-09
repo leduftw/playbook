@@ -1,8 +1,9 @@
+import re
 import tempfile
 import unittest
 from pathlib import Path
 
-from playbook import major_ref, render
+from playbook import ROOT, major_ref, render
 from tests.fixtures import DBIRD, LOCAL, MONAD, config
 
 
@@ -19,10 +20,19 @@ class ManagedFilesTest(unittest.TestCase):
         workflow = files[".github/workflows/playbook.yml"]
         self.assertIn(f"leduftw/playbook/.github/workflows/pipeline.yml@{major_ref()}", workflow)
         self.assertIn(f"playbook-ref: {major_ref()}", workflow)
-        self.assertNotIn("id-token", workflow)
         self.assertNotIn("registry:", workflow)
         self.assertNotIn(".github/release.yml", files)
         self.assertNotIn("@@", "".join(files.values()))
+
+    def test_every_repo_grants_what_any_pipeline_job_may_ask_for(self):
+        # GitHub refuses to start a run when any job in the called workflow asks
+        # for more than the caller grants, even a job that would be skipped.
+        pipeline = (ROOT / ".github" / "workflows" / "pipeline.yml").read_text()
+        wanted = set(re.findall(r"^\s{6}([a-z-]+): write$", pipeline, re.M))
+        workflow = render.managed_files(self.root, config(LOCAL))[".github/workflows/playbook.yml"]
+        granted = set(re.findall(r"^\s{6}([a-z-]+): write$", workflow, re.M))
+        self.assertTrue(wanted, "found no permissions in pipeline.yml")
+        self.assertLessEqual(wanted, granted)
 
     def test_published_repo_with_a_registry_gets_the_registry_job(self):
         files = render.managed_files(self.root, config(DBIRD))
