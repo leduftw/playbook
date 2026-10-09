@@ -20,13 +20,13 @@ jobs:
     uses: @@pipeline@@
     with:
       playbook-ref: @@ref@@
+    # GitHub checks these against every job in the pipeline, including the ones
+    # only published repos run; each job then narrows them to what it needs.
     permissions:
       contents: write
       pull-requests: write
-@@#published@@
       id-token: write
       attestations: write
-@@/published@@
 @@#registry@@
 
   registry:

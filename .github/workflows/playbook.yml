@@ -20,6 +20,10 @@ jobs:
     uses: ./.github/workflows/pipeline.yml
     with:
       playbook-ref: ${{ github.event.pull_request.head.sha || github.sha }}
+    # GitHub checks these against every job in the pipeline, including the ones
+    # only published repos run; each job then narrows them to what it needs.
     permissions:
       contents: write
       pull-requests: write
+      id-token: write
+      attestations: write

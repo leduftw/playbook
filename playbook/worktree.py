@@ -22,6 +22,7 @@ WORKTREES = Path(os.environ.get("PLAYBOOK_WORKTREES", Path.home() / "Developer" 
 
 def slugify(title: str, limit: int = 40) -> str:
     ascii_title = unicodedata.normalize("NFKD", title).encode("ascii", "ignore").decode()
+    ascii_title = re.sub(r"['’]", "", ascii_title)  # "doesn't" -> "doesnt", not "doesn-t"
     slug = re.sub(r"[^a-z0-9]+", "-", ascii_title.lower()).strip("-")
     if len(slug) > limit:
         slug = slug[:limit].rsplit("-", 1)[0] or slug[:limit]
