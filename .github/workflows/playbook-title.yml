@@ -13,4 +13,5 @@ jobs:
   playbook:
     uses: ./.github/workflows/title.yml
     permissions:
+      contents: read
       pull-requests: write
