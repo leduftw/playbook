@@ -24,15 +24,30 @@ class ManagedFilesTest(unittest.TestCase):
         self.assertNotIn(".github/release.yml", files)
         self.assertNotIn("@@", "".join(files.values()))
 
-    def test_every_repo_grants_what_any_pipeline_job_may_ask_for(self):
-        # GitHub refuses to start a run when any job in the called workflow asks
-        # for more than the caller grants, even a job that would be skipped.
-        pipeline = (ROOT / ".github" / "workflows" / "pipeline.yml").read_text()
-        wanted = set(re.findall(r"^\s{6}([a-z-]+): write$", pipeline, re.M))
-        workflow = render.managed_files(self.root, config(LOCAL))[".github/workflows/playbook.yml"]
-        granted = set(re.findall(r"^\s{6}([a-z-]+): write$", workflow, re.M))
-        self.assertTrue(wanted, "found no permissions in pipeline.yml")
-        self.assertLessEqual(wanted, granted)
+    def test_callers_grant_everything_their_workflow_asks_for(self):
+        # GitHub refuses to start a run when the called workflow, or any job in
+        # it, asks for more than the caller grants, even a job that's skipped.
+        levels = {"none": 0, "read": 1, "write": 2}
+
+        def permissions(text):
+            found = {}
+            for scope, level in re.findall(r"^\s+([a-z-]+): (read|write)$", text, re.M):
+                found[scope] = max(found.get(scope, 0), levels[level])
+            return found
+
+        files = render.managed_files(self.root, config(DBIRD))
+        pairs = {
+            ".github/workflows/playbook.yml": "pipeline.yml",
+            ".github/workflows/playbook-title.yml": "title.yml",
+        }
+        for caller, called in pairs.items():
+            with self.subTest(caller=caller):
+                wanted = permissions((ROOT / ".github" / "workflows" / called).read_text())
+                job = files[caller].split("    uses: ", 1)[1]
+                granted = permissions(job.split("\n  registry:", 1)[0])
+                self.assertTrue(wanted)
+                for scope, level in wanted.items():
+                    self.assertGreaterEqual(granted.get(scope, 0), level, f"{caller} must grant {scope}")
 
     def test_published_repo_with_a_registry_gets_the_registry_job(self):
         files = render.managed_files(self.root, config(DBIRD))

@@ -13,4 +13,5 @@ jobs:
   playbook:
     uses: @@title@@
     permissions:
+      contents: read
       pull-requests: write
