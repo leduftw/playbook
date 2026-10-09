@@ -65,8 +65,8 @@ def ruleset_body() -> dict:
                     "require_code_owner_review": False,
                     "require_last_push_approval": False,
                     "required_review_thread_resolution": False,
-                    # GitHub turns this on unless it's sent; with nobody else to
-                    # approve, it refuses every merge in a one-person repo.
+                    # GitHub turns this on unless it's sent. It asks for a second
+                    # person's approval, and these repos have nobody to give one.
                     "require_extra_approval_for_unattributed_changes": False,
                     "allowed_merge_methods": ["squash"],
                 },
