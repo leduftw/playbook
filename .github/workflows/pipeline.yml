@@ -383,8 +383,12 @@ jobs:
           WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
         run: python "$PLAYBOOK/bin/playbook" ci winget --version "${{ needs.plan.outputs.version }}"
 
+  # Runs only after every check above has passed: without a ruleset (private
+  # repos before GitHub Pro) auto-merge has nothing to wait for and would merge
+  # at once, so this job is what makes the checks count.
   dependabot:
     name: dependabot
+    needs: [checks]
     if: github.event_name == 'pull_request' && github.event.pull_request.user.login == 'dependabot[bot]'
     runs-on: ubuntu-24.04
     permissions:
@@ -394,13 +398,15 @@ jobs:
       - name: Read the update
         id: update
         uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
-      - name: Merge minor and patch updates once checks pass
+      - name: Merge minor and patch updates
         if: steps.update.outputs.update-type != 'version-update:semver-major'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.html_url }}
         run: |
-          if ! gh pr merge --auto --squash "$PR"; then
-            echo "::warning::couldn't turn on auto-merge; it needs auto-merge allowed and a ruleset on main (playbook settings)"
+          # The checks have passed. If GitHub still waits for something else,
+          # such as the title check, auto-merge finishes once it's done.
+          if ! gh pr merge --squash "$PR"; then
+            gh pr merge --auto --squash "$PR" || echo "::warning::couldn't merge or turn on auto-merge; land it with playbook finish"
           fi
