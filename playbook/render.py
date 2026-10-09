@@ -158,6 +158,12 @@ def dependabot(root: Path, config: Config) -> str:
             "          - minor",
             "          - patch",
         ]
+        if ecosystem == "npm":
+            lines += [
+                "    # Raise the manifest floor, not just the lockfile, so a fresh install",
+                "    # can't fall back to a version with a known vulnerability.",
+                "    versioning-strategy: increase",
+            ]
         if ecosystem == "github-actions":
             lines += [
                 "    # The playbook itself moves through playbook sync, not Dependabot.",

@@ -150,7 +150,7 @@ templates.
 
 ```sh
 python3 -m unittest discover -s tests -t .
-uvx ruff check . && uvx ruff format --check .
+uvx ruff@0.17.0 check . && uvx ruff@0.17.0 format --check .
 actionlint
 ```
 

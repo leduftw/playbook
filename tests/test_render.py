@@ -72,6 +72,7 @@ class ManagedFilesTest(unittest.TestCase):
         text = render.dependabot(self.root, config(DBIRD))
         self.assertIn("package-ecosystem: cargo", text)
         self.assertIn('package-ecosystem: npm\n    directory: "/leaderboard"', text)
+        self.assertIn("versioning-strategy: increase", text)
         self.assertIn("package-ecosystem: github-actions", text)
         self.assertIn('dependency-name: "leduftw/playbook*"', text)
 

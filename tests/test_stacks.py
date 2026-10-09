@@ -105,7 +105,8 @@ class CheckCommandsTest(unittest.TestCase):
     def test_python_runs_unittest_when_there_are_tests(self):
         (self.root / "tests").mkdir()
         commands = stacks.check_commands(self.root, Check(stack="python"))
-        self.assertEqual(commands["test"], ["python -m unittest discover -s tests -t ."])
+        self.assertEqual(commands["test"], ["python -m unittest discover -s tests"])
+        self.assertTrue(commands["lint"][0].startswith("uvx ruff@"), "ruff must be pinned")
 
 
 class ArchiveNameTest(unittest.TestCase):
