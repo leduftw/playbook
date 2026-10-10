@@ -205,11 +205,31 @@ def finish(pr: str | None = None) -> None:
     say(f"done; the primary checkout is {root}")
 
 
+def remove_empty_folders(folder: Path, worktrees: Path) -> None:
+    """Remove a repo's folder under worktrees, then worktrees itself, once empty.
+
+    git worktree remove only deletes the worktree; the folder start created
+    above it would otherwise stay behind. Only folders inside worktrees are
+    touched, and a lone .DS_Store (Finder's) counts as empty.
+    """
+    candidates = [folder, worktrees] if folder.parent == worktrees else [worktrees]
+    for directory in candidates:
+        if not directory.is_dir():
+            continue
+        entries = list(directory.iterdir())
+        if any(entry.name != ".DS_Store" for entry in entries):
+            return
+        for entry in entries:
+            entry.unlink()
+        directory.rmdir()
+
+
 def cleanup(root: Path, cwd: Path, branch: str) -> None:
     linked = in_linked_worktree(cwd)
     if linked:
         git("worktree", "remove", str(cwd), cwd=root)
         say(f"removed the worktree {cwd}")
+        remove_empty_folders(cwd.parent, WORKTREES)
     else:
         git("checkout", "--quiet", "main", cwd=root)
     run(["git", "branch", "-D", branch], cwd=root, check=False, capture=True)
