@@ -415,6 +415,8 @@ jobs:
       - name: Submit the WinGet update
         shell: bash
         env:
+          # gh reads the package's current manifest; it won't run without a token.
+          GH_TOKEN: ${{ github.token }}
           WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
         run: python "$PLAYBOOK/bin/playbook" ci winget --version "${{ needs.plan.outputs.version }}"
 

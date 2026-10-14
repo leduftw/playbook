@@ -7,7 +7,9 @@ token or a missing package fails the job loudly instead of skipping it.
 
 from __future__ import annotations
 
+import base64
 import hashlib
+import json
 import os
 import re
 import tempfile
@@ -28,22 +30,45 @@ def manifest_path(package_id: str) -> str:
     return f"manifests/{publisher[0].lower()}/{publisher}/{name}"
 
 
-def published_architectures(package_id: str) -> list[str] | None:
-    """Architectures in the newest manifest on winget-pkgs, or None if the package is absent."""
-    try:
-        versions = gh_json("api", f"repos/microsoft/winget-pkgs/contents/{manifest_path(package_id)}")
-    except Failure:
-        return None
+def newest_installer_manifest(package_id: str) -> str | None:
+    """The installer manifest of the newest version on winget-pkgs, or None if the package is absent."""
+    result = run(
+        ["gh", "api", f"repos/microsoft/winget-pkgs/contents/{manifest_path(package_id)}"],
+        check=False,
+        capture=True,
+    )
+    if result.returncode != 0:
+        # Only a missing package means "not on WinGet"; anything else (no
+        # token, rate limits) must fail loudly instead of reading as absent.
+        if "Not Found" in result.stderr or "404" in result.stdout + result.stderr:
+            return None
+        raise Failure(f"couldn't read {package_id} from winget-pkgs: {result.stderr.strip()}")
+    versions = json.loads(result.stdout or "null")
     names = [item["name"] for item in versions or [] if item["type"] == "dir"]
     if not names:
         return None
     newest = max(names, key=lambda v: [int(p) if p.isdigit() else 0 for p in re.split(r"[.-]", v)])
     path = f"{manifest_path(package_id)}/{newest}/{package_id}.installer.yaml"
     content = gh_json("api", f"repos/microsoft/winget-pkgs/contents/{path}")
-    import base64
+    return base64.b64decode(content["content"]).decode("utf-8")
 
-    text = base64.b64decode(content["content"]).decode("utf-8")
-    return sorted(set(re.findall(r"(?m)^\s*-?\s*Architecture:\s*(\w+)", text)))
+
+def architectures(manifest: str) -> list[str]:
+    return sorted(set(re.findall(r"(?m)^\s*-?\s*Architecture:\s*(\w+)", manifest)))
+
+
+def layout_problem(manifest: str, binary: str) -> str | None:
+    """wingetcreate keeps the manifest's path to the program inside the zip, so
+    it must match the playbook's archives, which hold <binary>.exe at the top."""
+    paths = re.findall(r"(?m)^\s*-?\s*RelativeFilePath:\s*(\S+)", manifest)
+    wrong = sorted({path for path in paths if path.replace("\\", "/").lower() != f"{binary}.exe".lower()})
+    if not wrong:
+        return None
+    return (
+        f"the WinGet manifest expects {', '.join(wrong)} inside the zip, but the archives hold {binary}.exe "
+        "at the top. Submit this version's manifest by hand once (RelativeFilePath: "
+        f"{binary}.exe); later releases then update it automatically."
+    )
 
 
 def check(config: Config) -> None:
@@ -51,12 +76,16 @@ def check(config: Config) -> None:
     release = config.release
     assert release is not None
     package_id = release.winget.id
-    present = published_architectures(package_id)
-    if present is None:
+    manifest = newest_installer_manifest(package_id)
+    if manifest is None:
         raise Failure(
             f"{package_id} isn't in winget-pkgs yet. The first version is a one-time manual "
             f"submission (wingetcreate new <url>); later releases update it automatically."
         )
+    problem = layout_problem(manifest, release.binaries[0])
+    if problem:
+        raise Failure(problem)
+    present = architectures(manifest)
     wanted = [ARCHITECTURES[t] for t in release.targets if t in ARCHITECTURES]
     missing = sorted(set(wanted) - set(present))
     if missing:
@@ -74,9 +103,13 @@ def submit(root: Path, config: Config, version: str) -> None:
     if not token:
         raise Failure("WINGET_TOKEN isn't set in this repo's release environment")
     package_id = release.winget.id
-    present = published_architectures(package_id)
-    if present is None:
+    manifest = newest_installer_manifest(package_id)
+    if manifest is None:
         raise Failure(f"{package_id} isn't in winget-pkgs yet; submit the first version by hand")
+    problem = layout_problem(manifest, release.binaries[0])
+    if problem:
+        raise Failure(problem)
+    present = architectures(manifest)
 
     repo = repository(root)
     urls = []
