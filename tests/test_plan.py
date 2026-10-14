@@ -22,6 +22,8 @@ class ReleaseModeTest(unittest.TestCase):
 
     def test_released_version_does_nothing(self):
         self.assertEqual(release_mode("push", "refs/heads/main", "1.2.0", ["v1.2.0", "v1"]), "none")
+        self.assertEqual(release_mode("workflow_dispatch", "refs/heads/main", "1.2.0", ["v1.2.0"]), "channels")
+        self.assertEqual(release_mode("workflow_dispatch", "refs/heads/feature", "1.2.0", ["v1.2.0"]), "none")
 
     def test_gaps_fail(self):
         with self.assertRaises(Failure):

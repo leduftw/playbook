@@ -20,6 +20,9 @@ jobs:
     uses: @@pipeline@@
     with:
       playbook-ref: @@ref@@
+    # The release jobs read the release environment's secrets (the tap deploy
+    # key, the WinGet token); a called workflow sees no secrets unless passed.
+    secrets: inherit
     # GitHub checks these against every job in the pipeline, including the ones
     # only published repos run; each job then narrows them to what it needs.
     permissions:
@@ -31,7 +34,9 @@ jobs:
 
   registry:
     needs: playbook
-    if: needs.playbook.outputs.released == 'true'
+    # Runs even when another channel failed, so one broken channel can't
+    # hold back the registry.
+    if: ${{ !cancelled() && needs.playbook.outputs.released == 'true' }}
     runs-on: ubuntu-24.04
     environment: release
     permissions:

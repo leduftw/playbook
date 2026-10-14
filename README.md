@@ -61,6 +61,10 @@ A published repo is one other people install. Today that's
     and `irm https://github.com/leduftw/<name>/releases/latest/download/<name>-installer.ps1 | iex`
   - the language registry (crates.io or NuGet) through trusted publishing, so
     no registry token is stored anywhere
+- **A failed channel is retried without a new release:** once the cause is
+  fixed (an expired token, say), `gh workflow run playbook --ref main` updates
+  the channels of the latest release from its published files. Each channel
+  runs on its own, so one failing never holds back the others.
 - **Topics say what it is, so strangers can find it:** 5–10 of them covering
   what the program is, its language, and the platforms it runs on. Platform
   topics (`macos`, `windows`, `linux`) are all of the release's platforms or

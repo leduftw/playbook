@@ -146,7 +146,7 @@ jobs:
   build:
     name: build ${{ matrix.target }}
     needs: plan
-    if: needs.plan.outputs.mode != 'none'
+    if: needs.plan.outputs.mode == 'verify' || needs.plan.outputs.mode == 'publish'
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.plan.outputs.build) }}
@@ -205,7 +205,7 @@ jobs:
   homebrew-dry-run:
     name: homebrew dry run
     needs: [plan, build]
-    if: needs.plan.outputs.mode != 'none' && needs.plan.outputs.homebrew == 'true'
+    if: (needs.plan.outputs.mode == 'verify' || needs.plan.outputs.mode == 'publish') && needs.plan.outputs.homebrew == 'true'
     runs-on: macos-15
     permissions:
       contents: read
@@ -231,7 +231,7 @@ jobs:
   channels-dry-run:
     name: channels dry run
     needs: plan
-    if: needs.plan.outputs.mode != 'none'
+    if: needs.plan.outputs.mode == 'verify' || needs.plan.outputs.mode == 'publish'
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -287,7 +287,7 @@ jobs:
   publish:
     name: publish ${{ needs.plan.outputs.tag }}
     needs: [plan, checks]
-    if: needs.plan.outputs.mode == 'publish'
+    if: needs.plan.outputs.mode == 'publish' || needs.plan.outputs.mode == 'channels'
     runs-on: ubuntu-24.04
     environment: release
     permissions:
@@ -295,8 +295,8 @@ jobs:
       id-token: write
       attestations: write
     outputs:
-      released: ${{ steps.release.outputs.released }}
-      sha: ${{ github.sha }}
+      released: ${{ steps.release.outputs.released || steps.existing.outputs.released }}
+      sha: ${{ steps.existing.outputs.sha || github.sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -308,23 +308,43 @@ jobs:
         with:
           python-version: "3.13"
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: needs.plan.outputs.mode == 'publish'
         with:
           pattern: release-*
           merge-multiple: true
           path: dist
       - name: Assemble the release files
+        if: needs.plan.outputs.mode == 'publish'
         shell: bash
         run: python "$PLAYBOOK/bin/playbook" ci assemble --version "${{ needs.plan.outputs.version }}" --dist dist
       - name: Record provenance
+        if: needs.plan.outputs.mode == 'publish'
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: dist/*
       - name: Publish the release
+        if: needs.plan.outputs.mode == 'publish'
         id: release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: python "$PLAYBOOK/bin/playbook" ci release --version "${{ needs.plan.outputs.version }}" --dist dist --sha "${{ github.sha }}"
+      - name: Find the published release
+        if: needs.plan.outputs.mode == 'channels'
+        id: existing
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.plan.outputs.tag }}
+        run: |
+          if [ "$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)" != "false" ]; then
+            echo "::error::$TAG has no published release"
+            exit 1
+          fi
+          sha=$(gh api "repos/$GITHUB_REPOSITORY/commits/$TAG" --jq .sha)
+          echo "updating the channels of $TAG, built from $sha"
+          echo "released=true" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
 
   homebrew:
     name: update Homebrew
@@ -345,10 +365,17 @@ jobs:
         with:
           python-version: "3.13"
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: needs.plan.outputs.mode == 'publish'
         with:
           pattern: release-*
           merge-multiple: true
           path: dist
+      - name: Download the published files
+        if: needs.plan.outputs.mode == 'channels'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download "${{ needs.plan.outputs.tag }}" --repo "$GITHUB_REPOSITORY" --dir dist
       - name: Check out the tap
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
