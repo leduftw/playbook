@@ -1,12 +1,14 @@
 """playbook audit: does a repo still match the playbook?
 
 Checks the repo's settings on GitHub, its ruleset and labels, the files the
-playbook owns, README badges, and, for published repos, topics, locked releases, the release
-environment and the secrets each channel needs. Nothing is changed.
+playbook owns, README badges and Dependabot PRs waiting more than a week. For
+published repos it also checks topics, locked releases, the release environment
+and the secrets each channel needs. Nothing is changed.
 """
 
 from __future__ import annotations
 
+import datetime
 import tempfile
 from pathlib import Path
 
@@ -29,6 +31,23 @@ def audit_repo(repo: str) -> list[str]:
                 problems.append("auto-merge on private repos needs GitHub Pro")
             else:
                 problems.append(f"setting {key} is {info.get(key)!r}, not {wanted!r}")
+
+    prs = (
+        gh_json(
+            "pr",
+            "list",
+            "--repo",
+            repo,
+            "--author",
+            "app/dependabot",
+            "--state",
+            "open",
+            "--json",
+            "number,title,createdAt",
+        )
+        or []
+    )
+    problems += waiting_dependabot(prs, datetime.datetime.now(datetime.UTC))
 
     labels = {label["name"] for label in gh_json("api", f"repos/{repo}/labels?per_page=100") or []}
     missing_labels = sorted(set(LABELS) - labels)
@@ -78,6 +97,21 @@ def audit_repo(repo: str) -> list[str]:
             stale = [s["name"] for s in secrets.get("secrets", [])]
             if stale:
                 problems.append(f"repo-level secrets should live in the release environment: {', '.join(stale)}")
+    return problems
+
+
+WAITING_DAYS = 7
+
+
+def waiting_dependabot(prs: list[dict], now: datetime.datetime) -> list[str]:
+    """Dependabot PRs open longer than a week: major updates waiting for a
+    session, or PRs stuck on a conflict. Minor and patch ones merge themselves."""
+    problems = []
+    for pr in sorted(prs, key=lambda pr: pr["number"]):
+        opened = datetime.datetime.fromisoformat(pr["createdAt"].replace("Z", "+00:00"))
+        days = (now - opened).days
+        if days > WAITING_DAYS:
+            problems.append(f"Dependabot PR #{pr['number']} has waited {days} days: {pr['title']}")
     return problems
 
 

@@ -108,7 +108,7 @@ signed in.
 | `playbook new <name> --published\|--local --stack <stack> --description "..." [--topics "..."]` | Starts a repo that follows the playbook |
 | `playbook sync [--here \| <repo>... \| --all]` | Brings the playbook's files in a repo up to date |
 | `playbook settings [<repo>... \| --all]` | Applies the shared GitHub settings |
-| `playbook audit [--here \| <repo>... \| --all]` | Reports anything that differs from the playbook, including missing or misleading topics and README badges that point at removed workflows |
+| `playbook audit [--here \| <repo>... \| --all]` | Reports anything that differs from the playbook, including missing or misleading topics, README badges that point at removed workflows, and Dependabot PRs waiting more than a week |
 
 ## Starting a repo
 
