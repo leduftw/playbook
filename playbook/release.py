@@ -46,7 +46,9 @@ def open_release(kind: str) -> str:
     if problems:
         raise Failure("the release can't publish until this is fixed:\n- " + "\n- ".join(problems))
 
-    if git("rev-parse", "--abbrev-ref", "HEAD", cwd=root) != "main" or git("status", "--porcelain", cwd=root):
+    # The release is made in its own worktree, so untracked files here can't affect it.
+    changed = git("status", "--porcelain", "--untracked-files=no", cwd=root)
+    if git("rev-parse", "--abbrev-ref", "HEAD", cwd=root) != "main" or changed:
         raise Failure(f"the primary checkout ({root}) must be on a clean main")
     git("pull", "--quiet", "--ff-only", "origin", "main", cwd=root)
 
