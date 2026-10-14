@@ -49,6 +49,16 @@ class ManagedFilesTest(unittest.TestCase):
                 for scope, level in wanted.items():
                     self.assertGreaterEqual(granted.get(scope, 0), level, f"{caller} must grant {scope}")
 
+    def test_jobs_after_skippable_jobs_check_results_themselves(self):
+        # Without a status function a job runs only when nothing upstream was
+        # skipped; the builds are skipped on ordinary PRs and channel reruns.
+        pipeline = (ROOT / ".github" / "workflows" / "pipeline.yml").read_text()
+        for job in re.split(r"\n(?=  [a-z-]+:\n)", pipeline):
+            needs = re.search(r"^    needs: \[?([^\]\n]*)", job, re.M)
+            if needs and re.search(r"\b(checks|publish)\b", needs.group(1)):
+                with self.subTest(job=job.split(":", 1)[0].strip()):
+                    self.assertIn("!cancelled()", job)
+
     def test_the_caller_passes_secrets_the_pipeline_reads(self):
         # A called workflow sees no secrets unless the caller passes them, and
         # dry runs use none, so a missing line only shows on a real release.

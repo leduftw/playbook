@@ -287,7 +287,11 @@ jobs:
   publish:
     name: publish ${{ needs.plan.outputs.tag }}
     needs: [plan, checks]
-    if: needs.plan.outputs.mode == 'publish' || needs.plan.outputs.mode == 'channels'
+    # Without a status function, a job runs only if nothing upstream was
+    # skipped, and the channels mode skips the builds; so check results here.
+    if: >-
+      !cancelled() && needs.checks.result == 'success'
+      && (needs.plan.outputs.mode == 'publish' || needs.plan.outputs.mode == 'channels')
     runs-on: ubuntu-24.04
     environment: release
     permissions:
@@ -349,7 +353,9 @@ jobs:
   homebrew:
     name: update Homebrew
     needs: [plan, publish]
-    if: needs.plan.outputs.homebrew == 'true' && needs.publish.outputs.released == 'true'
+    if: >-
+      !cancelled() && needs.publish.result == 'success'
+      && needs.plan.outputs.homebrew == 'true' && needs.publish.outputs.released == 'true'
     runs-on: macos-15
     environment: release
     permissions:
@@ -389,7 +395,9 @@ jobs:
   winget:
     name: update WinGet
     needs: [plan, publish]
-    if: needs.plan.outputs.winget == 'true' && needs.publish.outputs.released == 'true'
+    if: >-
+      !cancelled() && needs.publish.result == 'success'
+      && needs.plan.outputs.winget == 'true' && needs.publish.outputs.released == 'true'
     runs-on: windows-2025
     environment: release
     permissions:
@@ -416,7 +424,10 @@ jobs:
   dependabot:
     name: dependabot
     needs: [checks]
-    if: github.event_name == 'pull_request' && github.event.pull_request.user.login == 'dependabot[bot]'
+    # Ordinary PRs skip the build jobs upstream, so check the result directly.
+    if: >-
+      !cancelled() && needs.checks.result == 'success'
+      && github.event_name == 'pull_request' && github.event.pull_request.user.login == 'dependabot[bot]'
     runs-on: ubuntu-24.04
     permissions:
       contents: write
