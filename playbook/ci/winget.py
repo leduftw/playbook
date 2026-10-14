@@ -23,6 +23,7 @@ from ..util import Failure, gh_json, repository, run, say, warn
 WINGETCREATE_URL = "https://github.com/microsoft/winget-create/releases/download/v1.12.13.0/wingetcreate.exe"
 WINGETCREATE_SHA256 = "24042bd37915805615e6cf969ac57c6439124c3fe85823327f5f3fb24bd9ffea"
 ARCHITECTURES = {"windows-x64": "x64", "windows-arm64": "arm64"}
+PULL_REQUEST = re.compile(r"https://github\.com/microsoft/winget-pkgs/pull/\d+")
 
 
 def manifest_path(package_id: str) -> str:
@@ -71,6 +72,22 @@ def layout_problem(manifest: str, binary: str) -> str | None:
     )
 
 
+def validation_note(binary: str, version_command: list[str]) -> str:
+    """WinGet validation runs the installed program with no arguments, and a
+    program that needs a terminal or a token exits 1 there. Telling the
+    administrators which command exits 0 clears Validation-Executable-Error."""
+    command = " ".join([f"{binary}.exe", *version_command])
+    return (
+        f"`{binary}.exe` exits 1 when started without arguments in the validation environment. "
+        f"`{command}` exits 0 there and can be used for validation; every release's build runs it as a smoke test."
+    )
+
+
+def pull_request(output: str) -> str | None:
+    match = PULL_REQUEST.search(output)
+    return match.group(0) if match else None
+
+
 def check(config: Config) -> None:
     """Dry run: the package must already exist, and should cover every Windows target."""
     release = config.release
@@ -80,7 +97,8 @@ def check(config: Config) -> None:
     if manifest is None:
         raise Failure(
             f"{package_id} isn't in winget-pkgs yet. The first version is a one-time manual "
-            f"submission (wingetcreate new <url>); later releases update it automatically."
+            f"submission (wingetcreate new <url>), with a PR comment saying `{release.binaries[0]}.exe "
+            f"{' '.join(release.version_command)}` exits 0; later releases update it automatically."
         )
     problem = layout_problem(manifest, release.binaries[0])
     if problem:
@@ -142,3 +160,15 @@ def submit(root: Path, config: Config, version: str) -> None:
     if result.returncode != 0:
         raise Failure(f"wingetcreate couldn't submit {package_id} {version}")
     say(f"submitted {package_id} {version} to winget-pkgs; Microsoft's moderators merge it")
+
+    # The update is already submitted, so a missing comment only costs a manual one.
+    url = pull_request(result.stdout + result.stderr)
+    note = validation_note(release.binaries[0], release.version_command)
+    if url is None:
+        warn(f"couldn't find the winget-pkgs PR in wingetcreate's output; comment on it by hand: {note}")
+        return
+    commented = run(["gh", "pr", "comment", url, "--body", note], env={"GH_TOKEN": token}, check=False, capture=True)
+    if commented.returncode != 0:
+        warn(f"couldn't comment on {url}: {commented.stderr.strip()}; comment by hand: {note}")
+        return
+    say(f"told WinGet validation how to run {release.binaries[0]} on {url}")
