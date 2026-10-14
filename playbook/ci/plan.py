@@ -17,7 +17,7 @@ from ..util import Failure, remote_tags, set_output, summary
 
 
 def release_mode(event: str, ref: str, current: str, tags: list[str]) -> str:
-    """none, verify or publish, after checking the version is a legal next step."""
+    """none, verify, publish or channels, after checking the version is a legal next step."""
     latest = semver.latest_tag(tags)
     version = semver.parse(current)
     if str(version) == semver.UNRELEASED:
@@ -25,6 +25,10 @@ def release_mode(event: str, ref: str, current: str, tags: list[str]) -> str:
             raise Failure(f"the version went back to {semver.UNRELEASED} after {latest} was released")
         return "none"
     if latest is not None and version == latest:
+        # A manual run on main redoes the channels of the release it matches,
+        # such as after a token expired; the release itself is locked.
+        if event == "workflow_dispatch" and ref == "refs/heads/main":
+            return "channels"
         return "none"
     problem = semver.check_next(latest, version)
     if problem:
@@ -114,7 +118,7 @@ def main(root: Path) -> None:
         mode = release_mode(event, ref, version, remote_tags(root))
 
     checks = check_matrix(root, config)
-    build = build_matrix(root, config) if mode != "none" else []
+    build = build_matrix(root, config) if mode in ("verify", "publish") else []
     release = config.release
     channels = release.channels if release else []
 
@@ -132,7 +136,12 @@ def main(root: Path) -> None:
     lines = [f"### {config.name}", ""]
     lines.append(f"- checks: {len(checks)} job(s)")
     if config.published:
-        verb = {"none": "no release", "verify": "verifies", "publish": "publishes"}[mode]
+        verb = {
+            "none": "no release",
+            "verify": "verifies",
+            "publish": "publishes",
+            "channels": "updates the channels of",
+        }[mode]
         lines.append(f"- release: {verb}" + (f" {version}" if mode != "none" else ""))
         if mode != "none":
             lines.append(f"- channels: {', '.join(channels) or 'GitHub Releases only'}")

@@ -32,6 +32,7 @@ This repo is published: other people install it.
 - `playbook release patch|minor|major` opens a PR that only bumps the version; nobody types a version number. The first release is always 1.0.0, and every later one is exactly the next patch, minor or major.
 - That PR builds and smoke-tests every release file on all six platforms. Landing it with `playbook finish` tags the release, publishes it on GitHub Releases and updates @@channels@@.
 - A published release is locked. A broken one is never fixed in place; ship the next patch.
+- If a channel fails (an expired token, a WinGet outage), fix the cause, then run `gh workflow run playbook --ref main`. A manual run whose version matches the latest release updates only its channels, from the files already published.
 @@/published@@
 @@#local@@
 ### Publishing

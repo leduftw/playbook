@@ -49,6 +49,15 @@ class ManagedFilesTest(unittest.TestCase):
                 for scope, level in wanted.items():
                     self.assertGreaterEqual(granted.get(scope, 0), level, f"{caller} must grant {scope}")
 
+    def test_the_caller_passes_secrets_the_pipeline_reads(self):
+        # A called workflow sees no secrets unless the caller passes them, and
+        # dry runs use none, so a missing line only shows on a real release.
+        pipeline = (ROOT / ".github" / "workflows" / "pipeline.yml").read_text()
+        self.assertIn("secrets.HOMEBREW_TAP_DEPLOY_KEY", pipeline)
+        workflow = render.managed_files(self.root, config(DBIRD))[".github/workflows/playbook.yml"]
+        job = workflow.split("    uses: ", 1)[1].split("\n  registry:", 1)[0]
+        self.assertIn("secrets: inherit", job)
+
     def test_published_repo_with_a_registry_gets_the_registry_job(self):
         files = render.managed_files(self.root, config(DBIRD))
         workflow = files[".github/workflows/playbook.yml"]
