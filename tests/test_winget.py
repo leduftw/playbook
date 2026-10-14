@@ -1,6 +1,6 @@
 import unittest
 
-from playbook.ci.winget import architectures, layout_problem, manifest_path
+from playbook.ci.winget import architectures, layout_problem, manifest_path, pull_request, validation_note
 
 OLD_DBIRD = """PackageIdentifier: leduftw.dbird
 InstallerType: zip
@@ -37,6 +37,15 @@ class WingetTest(unittest.TestCase):
         problem = layout_problem(OLD_DBIRD, "dbird")
         self.assertIn("dbird-v1.2.0-x86_64-pc-windows-msvc", problem)
         self.assertIn("RelativeFilePath: dbird.exe", problem)
+
+    def test_the_validation_note_names_the_smoke_test_command(self):
+        note = validation_note("dbird", ["--version"])
+        self.assertIn("`dbird.exe --version` exits 0", note)
+
+    def test_finds_the_pull_request_wingetcreate_opened(self):
+        output = "Submitting pull request for manifest...\nPull request can be found here: https://github.com/microsoft/winget-pkgs/pull/452784\n"
+        self.assertEqual(pull_request(output), "https://github.com/microsoft/winget-pkgs/pull/452784")
+        self.assertIsNone(pull_request("Submitting pull request for manifest...\n"))
 
 
 if __name__ == "__main__":

@@ -138,6 +138,10 @@ rules for desktop apps and services get written the first time one ships.
   each published repo's release environment
   (`gh secret set WINGET_TOKEN --env release --repo leduftw/<name>`), and a
   manual first submission of each new package (`wingetcreate new <url>`).
+  WinGet's validation runs the program with no arguments, so a program that
+  needs a terminal or a token gets `Validation-Executable-Error`; comment on
+  the first PR that `<name>.exe --version` exits 0. Later releases post that
+  comment themselves.
 
 `playbook settings` does everything else, including each published repo's own
 deploy key for the Homebrew tap.
