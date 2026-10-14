@@ -13,6 +13,7 @@ import re
 from pathlib import Path
 
 from . import settings
+from . import topics as repo_topics
 from .config import load
 from .sync import sync_here
 from .util import Failure, gh, git, run, say
@@ -110,10 +111,11 @@ def scaffold(root: Path, name: str, stack: str, published: bool) -> None:
         run(["npm", "install", "--package-lock-only", "--silent"], cwd=root)
 
 
-def new(name: str, published: bool, private: bool, stack: str, description: str) -> None:
+def new(name: str, published: bool, private: bool, stack: str, description: str, topics: list[str]) -> None:
     if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", name):
         raise Failure("repo names are lowercase letters, digits and hyphens")
     validate_description(description)
+    repo_topics.validate(topics)
     if published and stack not in ("rust", "dotnet"):
         raise Failure(f"publishing a {stack} project isn't supported yet; it's added the first time one ships")
     if published and private:
@@ -164,7 +166,11 @@ def new(name: str, published: bool, private: bool, stack: str, description: str)
         ],
     )
     git("config", "core.hooksPath", ".githooks", cwd=root)
-    todo = settings.apply(repo, load(root))
+    if topics:
+        gh("repo", "edit", repo, *(f"--add-topic={topic}" for topic in topics))
+    config = load(root)
+    todo = settings.apply(repo, config)
+    todo += repo_topics.topic_problems(topics, config)
     if published:
         binary = name
         todo.append(f"make `{binary} --version` print the version; every release's smoke test runs it")
