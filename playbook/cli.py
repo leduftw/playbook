@@ -66,7 +66,10 @@ def cmd_new(args: argparse.Namespace) -> None:
 
     if args.published == args.local:
         raise Failure("say whether the repo is --published (other people install it) or --local")
-    new(args.name, args.published, args.private, args.stack, args.description)
+    topics = [topic.strip() for topic in (args.topics or "").split(",") if topic.strip()]
+    if args.published and not topics:
+        raise Failure('a published repo needs --topics, e.g. --topics "game,terminal,rust,macos,windows,linux"')
+    new(args.name, args.published, args.private, args.stack, args.description, topics)
 
 
 def cmd_sync(args: argparse.Namespace) -> None:
@@ -214,6 +217,7 @@ def parser() -> argparse.ArgumentParser:
     new.add_argument("--private", action="store_true", help="a private GitHub repo (local repos only)")
     new.add_argument("--stack", required=True, choices=("rust", "dotnet", "python", "node"))
     new.add_argument("--description", required=True, help='lowercase first, no full stop: "subtitles for any video"')
+    new.add_argument("--topics", help="comma-separated; required when published: what it is, its language, platforms")
     new.set_defaults(func=cmd_new)
 
     for name, func, text in (

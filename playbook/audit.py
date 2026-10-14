@@ -1,7 +1,7 @@
 """playbook audit: does a repo still match the playbook?
 
 Checks the repo's settings on GitHub, its ruleset and labels, the files the
-playbook owns, and, for published repos, locked releases, the release
+playbook owns, README badges, and, for published repos, topics, locked releases, the release
 environment and the secrets each channel needs. Nothing is changed.
 """
 
@@ -10,7 +10,7 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-from . import render, version
+from . import render, topics, version
 from .config import ConfigError, load
 from .settings import LABELS, REPO_SETTINGS, REQUIRED_CHECKS, find_ruleset, missing_release_setup, ruleset_body
 from .sync import _is_playbook, clone
@@ -68,6 +68,7 @@ def audit_repo(repo: str) -> list[str]:
             problems.append(str(error))
             return problems
         problems += audit_files(root)
+        problems += topics.topic_problems(info.get("topics") or [], config)
         if config.published:
             immutable = run(["gh", "api", f"repos/{repo}/immutable-releases"], check=False, capture=True)
             if '"enabled":true' not in immutable.stdout.replace(" ", ""):
@@ -99,6 +100,7 @@ def audit_files(root: Path) -> list[str]:
             problems.append("AGENTS.md and CLAUDE.md differ")
         if render.agents_md(text, config, self_repo) != text:
             problems.append(f"the playbook section of AGENTS.md differs from playbook {version()}")
+    problems += topics.badge_problems(root)
     return problems
 
 

@@ -61,6 +61,11 @@ A published repo is one other people install. Today that's
     and `irm https://github.com/leduftw/<name>/releases/latest/download/<name>-installer.ps1 | iex`
   - the language registry (crates.io or NuGet) through trusted publishing, so
     no registry token is stored anywhere
+- **Topics say what it is, so strangers can find it:** 5–10 of them covering
+  what the program is, its language, and the platforms it runs on. Platform
+  topics (`macos`, `windows`, `linux`) are all of the release's platforms or
+  none, never a subset, which would read as "only runs here". Local repos need
+  no topics: nobody searches for them.
 - **Release files have stable names:** `<name>-<os>-<arch>.zip` (macOS, Windows)
   or `.tar.gz` (Linux), such as `dbird-macos-arm64.zip`. The version is in the
   release's address, not the file name, so `releases/latest/download/...`
@@ -96,10 +101,10 @@ signed in.
 | `playbook start <issue>` | Creates the worktree and branch for an issue |
 | `playbook finish` | Waits for checks, squash-merges, cleans up |
 | `playbook release patch\|minor\|major` | Opens the PR that releases the next version |
-| `playbook new <name> --published\|--local --stack <stack> --description "..."` | Starts a repo that follows the playbook |
+| `playbook new <name> --published\|--local --stack <stack> --description "..." [--topics "..."]` | Starts a repo that follows the playbook |
 | `playbook sync [--here \| <repo>... \| --all]` | Brings the playbook's files in a repo up to date |
 | `playbook settings [<repo>... \| --all]` | Applies the shared GitHub settings |
-| `playbook audit [--here \| <repo>... \| --all]` | Reports anything that differs from the playbook |
+| `playbook audit [--here \| <repo>... \| --all]` | Reports anything that differs from the playbook, including missing or misleading topics and README badges that point at removed workflows |
 
 ## Starting a repo
 
@@ -107,7 +112,8 @@ The first question for any new repo is whether it's **published** (other people
 install it) or **local** (it stays on my machines). `playbook new` won't guess:
 
 ```sh
-playbook new mytool --published --stack rust --description "a tool that does one thing well"
+playbook new mytool --published --stack rust --description "a tool that does one thing well" \
+  --topics "cli,rust,macos,windows,linux"
 playbook new notes --local --private --stack python --description "scripts for my notes"
 ```
 
