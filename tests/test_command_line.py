@@ -12,12 +12,14 @@ TOOL = """\
 import os
 import sys
 import time
+from pathlib import Path
 
 FAULTS = {faults!r}
 args = sys.argv[1:]
 
 def say(text, code=0, stream=sys.stdout):
-    if "colors" in FAULTS and os.environ.get("FORCE_COLOR"):
+    if ("colors" in FAULTS and os.environ.get("FORCE_COLOR")
+            and not os.environ.get("NO_COLOR") and os.environ.get("TERM") != "dumb"):
         text = "\\x1b[1m" + text + "\\x1b[0m"
     print(text, file=stream)
     sys.exit(code)
@@ -27,8 +29,16 @@ if not args:
         say("tool: no token", 1, sys.stderr)
     if "hangs" in FAULTS:
         time.sleep(30)
-    if os.environ.get("TOOL_TOKEN"):
+    if any(os.environ.get(name) for name in ("TOOL_TOKEN", "AWS_ACCESS_KEY_ID", "GOOGLE_APPLICATION_CREDENTIALS")):
         time.sleep(30)  # it would start working, which needs a terminal
+    for variable in ("HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "XDG_CONFIG_HOME",
+                     "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"):
+        if (Path(os.environ.get(variable, ".")) / "tool-token").is_file():
+            say("tool: inherited a config token", 1, sys.stderr)
+    for variable in ("XDG_CONFIG_DIRS", "XDG_DATA_DIRS"):
+        for directory in os.environ.get(variable, "").split(os.pathsep):
+            if (Path(directory) / "tool-token").is_file():
+                say("tool: inherited a shared config token", 1, sys.stderr)
     say("tool help\\nTo start, set TOOL_TOKEN.")
 if args in (["-h"], ["--help"]) or (args == ["help"] and "help word" not in FAULTS):
     say("tool help")
@@ -82,11 +92,38 @@ class CommandLineCheckTest(unittest.TestCase):
 
     def test_a_bare_run_gets_no_credentials(self):
         # The fake would start working with a token; the check must hide it.
-        with mock.patch.dict(os.environ, {"TOOL_TOKEN": "secret"}):
+        with mock.patch.dict(
+            os.environ,
+            {
+                "TOOL_TOKEN": "secret",
+                "AWS_ACCESS_KEY_ID": "secret",
+                "GOOGLE_APPLICATION_CREDENTIALS": "secret",
+            },
+        ):
+            self.assertEqual(self.problems(), [])
+
+    def test_a_bare_run_cannot_read_inherited_profile_or_config_directories(self):
+        inherited = Path(self.temp.name) / "inherited"
+        inherited.mkdir()
+        (inherited / "tool-token").write_text("a planted token", encoding="utf-8")
+        locations = (
+            "HOME",
+            "USERPROFILE",
+            "APPDATA",
+            "LOCALAPPDATA",
+            "XDG_CONFIG_HOME",
+            "XDG_CONFIG_DIRS",
+            "XDG_DATA_HOME",
+            "XDG_DATA_DIRS",
+            "XDG_STATE_HOME",
+            "XDG_CACHE_HOME",
+        )
+        with mock.patch.dict(os.environ, dict.fromkeys(locations, str(inherited))):
             self.assertEqual(self.problems(), [])
 
     def test_color_codes_never_reach_a_pipe(self):
-        self.assertProblem(self.problems("colors"), "printed color codes to stdout, which isn't a terminal")
+        with mock.patch.dict(os.environ, {"NO_COLOR": "1", "TERM": "dumb"}):
+            self.assertProblem(self.problems("colors"), "printed color codes to stdout, which isn't a terminal")
 
 
 if __name__ == "__main__":

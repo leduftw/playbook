@@ -17,7 +17,7 @@ from pathlib import Path
 UNKNOWN_OPTION = "--not-an-option-of-this-tool"
 
 # A bare run gets no credentials, as on a fresh machine or in WinGet's validation.
-_CREDENTIAL = re.compile(r"(TOKEN|KEY|SECRET|PASSWORD)$", re.IGNORECASE)
+_CREDENTIAL = re.compile(r"(TOKEN|KEY|SECRET|PASSWORD|CREDENTIALS?)(_|$)", re.IGNORECASE)
 
 # Settings that ask programs to color their output even into a pipe. Colors
 # reach only a terminal, so every run sets them and expects plain text.
@@ -87,9 +87,18 @@ def _fresh_environment(home: Path) -> dict[str, str]:
     environment.update(
         {
             "HOME": str(home),
+            "USERPROFILE": str(home),
+            "APPDATA": str(home / "AppData" / "Roaming"),
+            "LOCALAPPDATA": str(home / "AppData" / "Local"),
             "XDG_CONFIG_HOME": str(home / ".config"),
+            "XDG_CONFIG_DIRS": str(home / ".config"),
+            "XDG_DATA_HOME": str(home / ".local" / "share"),
+            "XDG_DATA_DIRS": str(home / ".local" / "share"),
             "XDG_STATE_HOME": str(home / ".local" / "state"),
+            "XDG_CACHE_HOME": str(home / ".cache"),
             **_FORCE_COLORS,
         }
     )
+    if os.name == "nt":
+        environment.update(HOMEDRIVE=home.drive, HOMEPATH=str(home)[len(home.drive) :])
     return environment
