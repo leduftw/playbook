@@ -48,8 +48,10 @@ A published repo is one other people install. Today that's
 - **The release PR proves the release** before anything is published: it builds
   every file for six platforms (macOS, Linux and Windows, each on Apple/ARM and
   Intel/AMD chips), opens each archive and checks its files, CPU type, linking
-  and reported version, runs the installers against it, installs the Homebrew
-  formula from a scratch tap, and dry-runs the registry upload.
+  and reported version, checks the main binary against the
+  [command-line rules](#how-command-line-tools-behave), runs the installers
+  against it, installs the Homebrew formula from a scratch tap, and dry-runs
+  the registry upload.
 - **Merging it publishes:** a draft release gets every file, `SHA256SUMS` and a
   signed provenance record, then is published, which creates the tag. Releases
   are locked once published, so a broken one is fixed by shipping the next
@@ -139,6 +141,16 @@ reaches WinGet only after Microsoft reviews it, which can take days, so when
 the newest version isn't on WinGet yet, `update` says that instead of calling
 itself current. Windows can't replace a running program, so there `update`
 starts `winget` or the installer and exits.
+
+Every release PR checks a published tool's behavior against these rules, on
+all six platforms, with its real binary: `-h`, `--help` and `help` print the
+same help to stdout; `-V`, `--version` and `version` print exactly
+`<name> <version>`; an unknown option exits 2 with a message on stderr only;
+`update --help` and `upgrade --help` show the same command; and a bare run with
+no terminal and no credentials exits 0, as WinGet's validation does. None of it
+may print color codes, even with `FORCE_COLOR`, `CLICOLOR_FORCE` or
+`PYTHON_COLORS` set, since the output goes to a pipe. The layout of the help is
+the tool's own.
 
 ## How a change here reaches every repo
 
