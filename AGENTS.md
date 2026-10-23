@@ -72,6 +72,16 @@ Sessions that don't change this repo's files (reading, planning, answering quest
 - start: `git fetch origin`, then `git worktree add -b dev/leduftw/<issue>-<slug> ~/Developer/.worktrees/playbook/<issue>-<slug> origin/main` (a cloud session is already isolated, so a branch from `origin/main` is enough)
 - finish: `gh pr checks --watch --required`, then `gh pr merge --squash`; once the PR shows `MERGED`, `git worktree remove <path>`, `git branch -D <branch>` (`-d` refuses, because squash commits aren't ancestors of `main`) and `git pull --ff-only` in the primary checkout
 
+### Command-line tools
+
+A command-line tool here follows the [Command Line Interface Guidelines](https://clig.dev) and the playbook's [rules for command-line tools](https://github.com/leduftw/playbook#how-command-line-tools-behave), in short:
+
+- `-h`/`--help` print the help, which describes the tool with the repo's GitHub description, and `-V`/`--version` print exactly `<name> <version>`, both to stdout with exit 0. A tool with subcommands also takes `help [<command>]` and `version`.
+- A wrong command, option or value prints a message to stderr and exits 2. A command that ran and failed exits 1.
+- Started with no arguments at all, the tool does its default job. If something that job needs isn't set up yet (a token, a terminal), it prints the help plus one line saying what's missing, and exits 0.
+- Help uses the colors of Python 3.14's `argparse`, only in a terminal, and none with `NO_COLOR`, `TERM=dumb` or `--no-color`.
+- Arguments are parsed by the language's standard parser (`argparse`, `clap`, `System.CommandLine`), never by hand.
+
 ### Releasing the playbook
 
 Repos pin the playbook as `v1`, so a release is what carries a change to them.
