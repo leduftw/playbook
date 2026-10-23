@@ -141,6 +141,10 @@ class AgentsTest(unittest.TestCase):
         self.assertIn("`update` (alias `upgrade`)", render.agents_section(config(MONAD)))
         self.assertNotIn("`update`", render.agents_section(config(LOCAL)))
 
+    def test_published_tools_hear_that_release_prs_check_the_rules(self):
+        self.assertIn("Every release PR checks these rules", render.agents_section(config(MONAD)))
+        self.assertNotIn("Every release PR checks these rules", render.agents_section(config(LOCAL)))
+
 
 if __name__ == "__main__":
     unittest.main()

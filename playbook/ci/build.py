@@ -24,6 +24,7 @@ from pathlib import Path
 from .. import stacks
 from ..config import Config, Release
 from ..util import Failure, output, run, say
+from . import command_line
 
 EXECUTABLE = 0o755
 REGULAR = 0o644
@@ -266,6 +267,13 @@ def smoke(root: Path, config: Config, target: str, version: str, dist: Path) -> 
         elif version not in reported:
             raise Failure(f"{binaries[0].name} reported {reported!r}, without {version}")
         say(f"{binaries[0].name} reports {reported!r}")
+
+        problems = command_line.check(binaries[0], config.name, version)
+        if problems:
+            raise Failure(
+                f"{binaries[0].name} breaks the playbook's command-line rules:\n  - " + "\n  - ".join(problems)
+            )
+        say(f"{binaries[0].name} follows the command-line rules")
 
         groups = ["all"] + (["unix"] if os_name != "windows" else []) + [os_name]
         for group in groups:

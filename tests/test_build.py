@@ -1,10 +1,14 @@
 import os
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
-from playbook.ci.build import EXECUTABLE, REGULAR, expected_files, extract, write_archive
+from playbook.ci.build import EXECUTABLE, REGULAR, expected_files, extract, smoke, write_archive
+from playbook.util import Failure
 from tests.fixtures import DBIRD, MONAD, config
+from tests.test_command_line import TOOL
 
 
 class ArchiveTest(unittest.TestCase):
@@ -44,6 +48,22 @@ class ArchiveTest(unittest.TestCase):
                 write_archive(self.stage, self.modes, first, 1_700_000_000)
                 write_archive(self.stage, self.modes, second, 1_700_000_000)
                 self.assertEqual(first.read_bytes(), second.read_bytes())
+
+    @unittest.skipIf(os.name == "nt", "the fake tool is a script with a shebang")
+    def test_smoke_rejects_an_archived_tool_that_breaks_the_command_line_rules(self):
+        cfg = config(DBIRD)
+        cfg.name = "tool"
+        cfg.release.binaries = ["tool"]
+        cfg.release.files = ["README.md"]
+        (self.stage / "tool").write_text(f"#!{sys.executable}\n" + TOOL.format(faults={"exit 1"}), encoding="utf-8")
+        archive = self.work / "tool-linux-x64.tar.gz"
+        write_archive(self.stage, self.modes, archive, 1_700_000_000)
+        # It is a script in this test; all the smoke test's process calls are real.
+        with (
+            mock.patch("playbook.ci.build._check_binary"),
+            self.assertRaisesRegex(Failure, r"`tool --not-an-option-of-this-tool` exited 1, not 2"),
+        ):
+            smoke(self.work, cfg, "linux-x64", "1.2.3", self.work)
 
 
 class ExpectedFilesTest(unittest.TestCase):
