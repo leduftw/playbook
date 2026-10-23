@@ -17,6 +17,10 @@ class Failure(Exception):
     """An expected failure: printed as a message, without a traceback."""
 
 
+class UsageError(Failure):
+    """Invalid command-line input, rather than a failure while running a command."""
+
+
 def say(message: str) -> None:
     print(message, flush=True)
 

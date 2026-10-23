@@ -12,7 +12,7 @@ from pathlib import Path
 
 from .config import Config
 from .stacks import TARGETS
-from .util import Failure
+from .util import UsageError
 
 PLATFORMS = ("macos", "windows", "linux")
 MAX_TOPICS = 20  # GitHub's limit
@@ -21,10 +21,10 @@ MAX_TOPICS = 20  # GitHub's limit
 def validate(topics: list[str]) -> None:
     """GitHub's rules for topic names, checked before anything is created."""
     if len(topics) > MAX_TOPICS:
-        raise Failure(f"GitHub allows at most {MAX_TOPICS} topics")
+        raise UsageError(f"GitHub allows at most {MAX_TOPICS} topics")
     for topic in topics:
         if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,49}", topic):
-            raise Failure(f"topic {topic!r} must be lowercase letters, digits and hyphens, at most 50 characters")
+            raise UsageError(f"topic {topic!r} must be lowercase letters, digits and hyphens, at most 50 characters")
 
 
 def platforms(config: Config) -> list[str]:

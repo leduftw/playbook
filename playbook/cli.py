@@ -3,27 +3,27 @@
 from __future__ import annotations
 
 import argparse
+import os
+import re
 import sys
 from pathlib import Path
 
 from . import semver, version
 from .config import ConfigError, load
-from .util import Failure, say
+from .util import Failure, UsageError, say
 
-DESCRIPTION = """\
-One standard for how every repo is worked on, checked and released.
+# The repo's GitHub description: a tool's help and its repo describe it the same way.
+DESCRIPTION = "one standard for how my repos are worked on, checked and released"
 
-Everyday commands:
-  start <issue>        create the worktree and branch for an issue
-  finish               wait for checks, squash-merge, clean up
-  release <bump>       open the PR that releases the next patch, minor or major
 
-Keeping repos in line:
-  new <name>           start a repo that follows the playbook
-  sync                 bring the playbook's files in a repo up to date
-  settings             apply the shared GitHub settings
-  audit                report anything that differs from the playbook
-"""
+class ArgumentParser(argparse.ArgumentParser):
+    def _print_message(self, message: str | None, file=None) -> None:
+        # argparse's environment overrides can color a pipe or ignore NO_COLOR.
+        # Apply our rules to the actual stream, including redirected stderr.
+        file = file or sys.stderr
+        if message and (not file.isatty() or os.environ.get("NO_COLOR") or os.environ.get("TERM") == "dumb"):
+            message = re.sub(r"\x1b\[[0-9;]*m", "", message)
+        super()._print_message(message, file)
 
 
 def _repos(args: argparse.Namespace) -> list[str]:
@@ -64,11 +64,9 @@ def cmd_release(args: argparse.Namespace) -> None:
 def cmd_new(args: argparse.Namespace) -> None:
     from .new import new
 
-    if args.published == args.local:
-        raise Failure("say whether the repo is --published (other people install it) or --local")
     topics = [topic.strip() for topic in (args.topics or "").split(",") if topic.strip()]
     if args.published and not topics:
-        raise Failure('a published repo needs --topics, e.g. --topics "game,terminal,rust,macos,windows,linux"')
+        raise UsageError('a published repo needs --topics, e.g. --topics "game,terminal,rust,macos,windows,linux"')
     new(args.name, args.published, args.private, args.stack, args.description, topics)
 
 
@@ -116,7 +114,7 @@ def cmd_audit(args: argparse.Namespace) -> int:
 
 
 def cmd_version(args: argparse.Namespace) -> None:
-    print(version())
+    print(f"playbook {version()}")
 
 
 # --- pipeline steps --------------------------------------------------------
@@ -192,11 +190,17 @@ def cmd_ci(args: argparse.Namespace) -> None:
         raise Failure(f"unknown step {step}")
 
 
-def parser() -> argparse.ArgumentParser:
-    root = argparse.ArgumentParser(
-        prog="playbook", description=DESCRIPTION, formatter_class=argparse.RawDescriptionHelpFormatter
+def parser(color: bool = True) -> argparse.ArgumentParser:
+    # argparse colors its help and suggests fixes for typos from Python 3.14 on;
+    # older versions print plain text without suggestions.
+    modern = {"color": color, "suggest_on_error": True} if sys.version_info >= (3, 14) else {}
+    root = ArgumentParser(prog="playbook", description=DESCRIPTION, **modern)
+    root.add_argument(
+        "-V", "--version", action="version", version=f"playbook {version()}", help="show the playbook version and exit"
     )
-    commands = root.add_subparsers(dest="command", required=True, metavar="<command>")
+    # main() takes --no-color out wherever it appears; it's declared here so the help lists it.
+    root.add_argument("--no-color", action="store_true", help="print without colors, like NO_COLOR=1")
+    commands = root.add_subparsers(dest="command", title="commands", metavar="<command>")
 
     start = commands.add_parser("start", help="create the worktree and branch for an issue")
     start.add_argument("issue", type=int)
@@ -212,8 +216,9 @@ def parser() -> argparse.ArgumentParser:
 
     new = commands.add_parser("new", help="start a repo that follows the playbook")
     new.add_argument("name")
-    new.add_argument("--published", action="store_true", help="other people install it")
-    new.add_argument("--local", action="store_true", help="it stays on your machines")
+    publication = new.add_mutually_exclusive_group(required=True)
+    publication.add_argument("--published", action="store_true", help="other people install it")
+    publication.add_argument("--local", action="store_true", help="it stays on your machines")
     new.add_argument("--private", action="store_true", help="a private GitHub repo (local repos only)")
     new.add_argument("--stack", required=True, choices=("rust", "dotnet", "python", "node"))
     new.add_argument("--description", required=True, help='lowercase first, no full stop: "subtitles for any video"')
@@ -233,6 +238,14 @@ def parser() -> argparse.ArgumentParser:
         if name == "sync":
             command.add_argument("--dry-run", action="store_true", help="show what would change")
         command.set_defaults(func=func)
+
+    show_help = commands.add_parser("help", help="show this help, or the help of one command")
+    topic = show_help.add_argument("topic", nargs="?", metavar="<command>")
+
+    def cmd_help(args: argparse.Namespace) -> None:
+        (commands.choices[args.topic] if args.topic else root).print_help()
+
+    show_help.set_defaults(func=cmd_help)
 
     show_version = commands.add_parser("version", help="print the playbook version")
     show_version.set_defaults(func=cmd_version)
@@ -266,13 +279,26 @@ def parser() -> argparse.ArgumentParser:
     ci.add_argument("--publish", action="store_true")
     ci.add_argument("--release", action="store_true")
     ci.set_defaults(func=cmd_ci)
+    topic.choices = list(commands.choices)
     return root
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = parser().parse_args(argv)
+    argv = sys.argv[1:] if argv is None else list(argv)
+    # --no-color decides how the help looks, and -h prints the help the moment
+    # argparse reaches it, so the flag is read first. Taking it out also lets it
+    # follow a command (`playbook audit --no-color`).
+    color = "--no-color" not in argv
+    argv = [arg for arg in argv if arg != "--no-color"]
+    root = parser(color)
+    args = root.parse_args(argv)
+    if args.command is None:
+        root.print_help()
+        return 0
     try:
         result = args.func(args)
+    except UsageError as error:
+        root.error(str(error))
     except (Failure, ConfigError) as error:
         print(f"playbook: {error}", file=sys.stderr)
         return 1

@@ -129,6 +129,18 @@ class AgentsTest(unittest.TestCase):
         self.assertIn("This repo is local", section)
         self.assertIn("~/Developer/.worktrees/media-library/", section)
 
+    def test_every_section_states_the_command_line_rules(self):
+        for repo in (MONAD, LOCAL):
+            with self.subTest(repo=repo):
+                section = render.agents_section(config(repo))
+                self.assertIn("### Command-line tools", section)
+                self.assertIn("https://clig.dev", section)
+                self.assertIn("exits 2", section)
+
+    def test_only_published_tools_have_update(self):
+        self.assertIn("`update` (alias `upgrade`)", render.agents_section(config(MONAD)))
+        self.assertNotIn("`update`", render.agents_section(config(LOCAL)))
+
 
 if __name__ == "__main__":
     unittest.main()
