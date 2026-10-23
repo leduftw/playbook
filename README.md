@@ -75,6 +75,70 @@ A published repo is one other people install. Today that's
   release's address, not the file name, so `releases/latest/download/...`
   always points at the newest one.
 
+## How command-line tools behave
+
+A command-line tool in any of these repos behaves like the others, whatever its
+language. The general approach comes from the
+[Command Line Interface Guidelines](https://clig.dev), so read them before
+designing a tool's commands and options. These rules settle what they leave
+open:
+
+- **Help:** `-h` and `--help` print the help to stdout and exit 0. A tool with
+  subcommands also takes `help` and `help <command>`. The help describes the
+  tool with the repo's GitHub description, word for word.
+- **Version:** `-V` and `--version` print exactly `<name> <version>`, such as
+  `dbird 1.3.0`, and exit 0. A tool with subcommands also takes `version`. `-v`
+  is left for `--verbose`.
+- **Mistakes:** an unknown command or option, or a missing or wrong value,
+  prints a message to stderr and exits 2. A command that ran and failed exits 1.
+  That tells a script its own mistake (2: retrying never helps) from a failure
+  (1: retrying might).
+- **No arguments:** a tool started with no arguments at all does its default
+  job when it can, such as a game starting a round. If something the job needs
+  isn't set up yet, such as a token or a terminal, it prints the help plus one
+  line saying what's missing, and exits 0. WinGet's validation starts every new
+  version this way. An explicit command that can't run (`monad run` without a
+  token) still exits 1, and a config file that exists but can't be read is an
+  error either way.
+- **Colors:** the palette of Python 3.14's `argparse`: the `usage:` label and
+  headings in bold blue, the program's name in bold magenta, commands,
+  arguments and short options (`-h`) in bold green, long options (`--help`) in
+  bold cyan, and option values in bold yellow; inside the usage line, the same
+  colors without bold. These are the terminal's basic colors, so they follow
+  its theme. Colors appear only when the output goes to a terminal, and
+  `NO_COLOR`, `TERM=dumb` or `--no-color` (anywhere on the command line) turn
+  them off.
+- **Words and dashes:** actions are subcommands, without dashes (`update`,
+  `run`); settings are options, with dashes (`--mute`, `--token`). Only help and
+  version come in both forms. A tool whose arguments are data, such as a file
+  to read, takes no `help` or `version` word, because `subtitler help` must be
+  free to mean a file called `help`.
+- **Parsing:** each language's standard parser, never a hand-written one, so
+  the help comes from the same definitions the parser uses: `argparse` in
+  Python, `clap` in Rust and `System.CommandLine` in .NET. In .NET the library
+  only parses: the tool prints its own help, version and errors, because the
+  library's defaults break these rules.
+
+A published tool also has `update`, with `upgrade` as an alias. It asks GitHub
+for the latest release and, if that's newer than itself, updates through the
+channel that installed it. It finds the channel from where its own file is,
+after following links: `/opt/homebrew/bin/<name>` is only Homebrew's link into
+its `Cellar`.
+
+| Installed with | Recognized by | `update` runs |
+| --- | --- | --- |
+| Homebrew | `/Cellar/<name>/` in the path | `brew upgrade leduftw/tap/<name>` |
+| WinGet | `\Microsoft\WinGet\` in the path | `winget upgrade --id leduftw.<name>` |
+| crates.io | Cargo's `bin` folder | `cargo install <name> --locked` |
+| A local build | `target/` or `bin/Debug` in the path | nothing: it refuses |
+| The one-line installer | anywhere else | the release's installer, into the same folder |
+
+If it's already the latest version, `update` says so and exits 0. A release
+reaches WinGet only after Microsoft reviews it, which can take days, so when
+the newest version isn't on WinGet yet, `update` says that instead of calling
+itself current. Windows can't replace a running program, so there `update`
+starts `winget` or the installer and exits.
+
 ## How a change here reaches every repo
 
 Each repo's workflow is a few lines that call this repo's shared pipeline,
@@ -97,8 +161,10 @@ the update to each repo as a PR that merges itself once its checks pass.
 
 ## Commands
 
-Put `bin/` on `PATH` (macbook-setup does this). Every command needs `gh`
-signed in.
+Put `bin/` on `PATH` (macbook-setup does this). Every command except `help` and
+`version` needs `gh` signed in. `playbook`, `playbook help` and `--help` list
+the commands, `playbook help <command>` shows one command's options, and
+`playbook version` or `-V` prints the version.
 
 | Command | What it does |
 | --- | --- |
