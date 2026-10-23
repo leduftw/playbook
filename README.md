@@ -101,13 +101,12 @@ open:
   token) still exits 1, and a config file that exists but can't be read is an
   error either way.
 - **Colors:** the palette of Python 3.14's `argparse`: the `usage:` label and
-  headings in bold blue, the program's name in bold magenta, commands,
-  arguments and short options (`-h`) in bold green, long options (`--help`) in
-  bold cyan, and option values in bold yellow. In the usage line, arguments,
-  options and values use those colors without bold; the `usage:` label and
-  program name keep their bold colors, and the subcommand in a program prefix
-  (`playbook start`) is magenta without bold. These are the terminal's basic
-  colors, so they follow its theme. Colors appear only when the output goes to a terminal, and
+  headings in bold blue, the program's name, subcommand included
+  (`playbook start`), in bold magenta, commands, arguments and short options
+  (`-h`) in bold green, long options (`--help`) in bold cyan, and option values
+  in bold yellow. Inside the usage line, arguments, options and values take the
+  same colors without bold. These are the terminal's basic colors, so they
+  follow its theme. Colors appear only when the output goes to a terminal, and
   `NO_COLOR`, `TERM=dumb` or `--no-color` (anywhere on the command line) turn
   them off.
 - **Words and dashes:** actions are subcommands, without dashes (`update`,
