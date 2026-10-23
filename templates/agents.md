@@ -30,7 +30,7 @@ A command-line tool here follows the [Command Line Interface Guidelines](https:/
 
 - `-h`/`--help` print the help, which describes the tool with the repo's GitHub description, and `-V`/`--version` print exactly `<name> <version>`, both to stdout with exit 0. A tool with subcommands also takes `help [<command>]` and `version`.
 - A wrong command, option or value prints a message to stderr and exits 2. A command that ran and failed exits 1.
-- Started with no arguments at all, the tool does its default job. If something that job needs isn't set up yet (a token, a terminal), it prints the help plus one line saying what's missing, and exits 0.
+- Started with no arguments at all, the tool does its default job. If something that job needs isn't set up yet (a token, a terminal), it prints the help plus one line saying what's missing, and exits 0. An explicit command still fails when its requirements are missing; an existing config that can't be read is an error either way.
 - Help uses the colors of Python 3.14's `argparse`, only in a terminal, and none with `NO_COLOR`, `TERM=dumb` or `--no-color`.
 - Arguments are parsed by the language's standard parser (`argparse`, `clap`, `System.CommandLine`), never by hand.
 @@#published@@

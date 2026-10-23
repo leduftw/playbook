@@ -16,7 +16,7 @@ from . import settings
 from . import topics as repo_topics
 from .config import load
 from .sync import sync_here
-from .util import Failure, gh, git, run, say
+from .util import Failure, UsageError, gh, git, run, say
 
 DEVELOPER = Path.home() / "Developer"
 
@@ -31,9 +31,9 @@ GITIGNORE = {
 def validate_description(description: str) -> None:
     """House style for repo descriptions: lowercase first, no full stop, plain words."""
     if not description or not description[0].islower():
-        raise Failure('the description must start with a lowercase letter, e.g. "subtitles for any video"')
+        raise UsageError('the description must start with a lowercase letter, e.g. "subtitles for any video"')
     if description.endswith("."):
-        raise Failure("the description must not end with a full stop")
+        raise UsageError("the description must not end with a full stop")
 
 
 def config_text(name: str, published: bool, stack: str, description: str) -> str:
@@ -113,13 +113,13 @@ def scaffold(root: Path, name: str, stack: str, published: bool) -> None:
 
 def new(name: str, published: bool, private: bool, stack: str, description: str, topics: list[str]) -> None:
     if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", name):
-        raise Failure("repo names are lowercase letters, digits and hyphens")
+        raise UsageError("repo names are lowercase letters, digits and hyphens")
     validate_description(description)
     repo_topics.validate(topics)
     if published and stack not in ("rust", "dotnet"):
-        raise Failure(f"publishing a {stack} project isn't supported yet; it's added the first time one ships")
+        raise UsageError(f"publishing a {stack} project isn't supported yet; it's added the first time one ships")
     if published and private:
-        raise Failure("a published repo must be public, so people can download its releases")
+        raise UsageError("a published repo must be public, so people can download its releases")
     login = gh("api", "user", "--jq", ".login")
     repo = f"{login}/{name}"
     root = DEVELOPER / name

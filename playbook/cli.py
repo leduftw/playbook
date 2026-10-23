@@ -3,15 +3,27 @@
 from __future__ import annotations
 
 import argparse
+import os
+import re
 import sys
 from pathlib import Path
 
 from . import semver, version
 from .config import ConfigError, load
-from .util import Failure, say
+from .util import Failure, UsageError, say
 
 # The repo's GitHub description: a tool's help and its repo describe it the same way.
 DESCRIPTION = "one standard for how my repos are worked on, checked and released"
+
+
+class ArgumentParser(argparse.ArgumentParser):
+    def _print_message(self, message: str | None, file=None) -> None:
+        # argparse's environment overrides can color a pipe or ignore NO_COLOR.
+        # Apply our rules to the actual stream, including redirected stderr.
+        file = file or sys.stderr
+        if message and (not file.isatty() or os.environ.get("NO_COLOR") or os.environ.get("TERM") == "dumb"):
+            message = re.sub(r"\x1b\[[0-9;]*m", "", message)
+        super()._print_message(message, file)
 
 
 def _repos(args: argparse.Namespace) -> list[str]:
@@ -52,11 +64,9 @@ def cmd_release(args: argparse.Namespace) -> None:
 def cmd_new(args: argparse.Namespace) -> None:
     from .new import new
 
-    if args.published == args.local:
-        raise Failure("say whether the repo is --published (other people install it) or --local")
     topics = [topic.strip() for topic in (args.topics or "").split(",") if topic.strip()]
     if args.published and not topics:
-        raise Failure('a published repo needs --topics, e.g. --topics "game,terminal,rust,macos,windows,linux"')
+        raise UsageError('a published repo needs --topics, e.g. --topics "game,terminal,rust,macos,windows,linux"')
     new(args.name, args.published, args.private, args.stack, args.description, topics)
 
 
@@ -184,7 +194,7 @@ def parser(color: bool = True) -> argparse.ArgumentParser:
     # argparse colors its help and suggests fixes for typos from Python 3.14 on;
     # older versions print plain text without suggestions.
     modern = {"color": color, "suggest_on_error": True} if sys.version_info >= (3, 14) else {}
-    root = argparse.ArgumentParser(prog="playbook", description=DESCRIPTION, **modern)
+    root = ArgumentParser(prog="playbook", description=DESCRIPTION, **modern)
     root.add_argument(
         "-V", "--version", action="version", version=f"playbook {version()}", help="show the playbook version and exit"
     )
@@ -206,8 +216,9 @@ def parser(color: bool = True) -> argparse.ArgumentParser:
 
     new = commands.add_parser("new", help="start a repo that follows the playbook")
     new.add_argument("name")
-    new.add_argument("--published", action="store_true", help="other people install it")
-    new.add_argument("--local", action="store_true", help="it stays on your machines")
+    publication = new.add_mutually_exclusive_group(required=True)
+    publication.add_argument("--published", action="store_true", help="other people install it")
+    publication.add_argument("--local", action="store_true", help="it stays on your machines")
     new.add_argument("--private", action="store_true", help="a private GitHub repo (local repos only)")
     new.add_argument("--stack", required=True, choices=("rust", "dotnet", "python", "node"))
     new.add_argument("--description", required=True, help='lowercase first, no full stop: "subtitles for any video"')
@@ -286,6 +297,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     try:
         result = args.func(args)
+    except UsageError as error:
+        root.error(str(error))
     except (Failure, ConfigError) as error:
         print(f"playbook: {error}", file=sys.stderr)
         return 1
