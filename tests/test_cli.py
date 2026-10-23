@@ -58,6 +58,13 @@ class VersionTest(unittest.TestCase):
                 self.assertEqual(run(*argv), (0, f"playbook {version()}\n", ""))
 
 
+class PipelineTest(unittest.TestCase):
+    def test_pipeline_steps_keep_their_own_version_value(self):
+        # The pipeline passes `ci <step> --version X`; the root's -V/--version must not take it.
+        args = cli.parser().parse_args(["ci", "build", "--target", "linux-x64", "--version", "1.2.3", "--out", "dist"])
+        self.assertEqual((args.step, args.target, args.version, args.out), ("build", "linux-x64", "1.2.3", "dist"))
+
+
 class MistakeTest(unittest.TestCase):
     def test_wrong_commands_options_and_values_exit_2_with_a_message_on_stderr(self):
         for argv in (["bogus"], ["--bogus"], ["help", "bogus"], ["release", "huge"], ["start"], ["start", "x"]):
