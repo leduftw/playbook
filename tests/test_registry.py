@@ -1,10 +1,14 @@
 import tempfile
 import unittest
+import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
+from unittest import mock
 
+from playbook.ci import registry
 from playbook.ci.registry import tool_packages
 from playbook.util import Failure
+from tests.fixtures import MONAD, config
 
 # DotnetToolSettings.xml as `dotnet pack` writes it, byte order mark included.
 POINTER = """﻿<?xml version="1.0" encoding="utf-8"?>
@@ -120,10 +124,69 @@ class ToolPackagesTest(unittest.TestCase):
         with self.assertRaisesRegex(Failure, "isn't a .NET tool"):
             tool_packages(self.out, "leduftw.monad", "2.2.0", [])
 
+    def test_a_referenced_package_that_isnt_a_tool_fails_even_without_mac_only_binaries(self):
+        self.per_platform({"tools/any/osx-arm64/monad": ""})
+        for binaries in ([], ["monad-audiotap"]):
+            with (
+                self.subTest(binaries=binaries),
+                self.assertRaisesRegex(Failure, "osx-arm64.2.2.0.nupkg isn't a .NET tool"),
+            ):
+                tool_packages(self.out, "leduftw.monad", "2.2.0", binaries)
+
+    def test_an_xml_file_without_tool_commands_isnt_tool_metadata(self):
+        self.package(
+            "leduftw.monad.2.2.0.nupkg",
+            {"tools/net10.0/any/DotnetToolSettings.xml": "<DotNetCliTool Version='1' />"},
+        )
+        with self.assertRaisesRegex(Failure, "isn't a .NET tool"):
+            tool_packages(self.out, "leduftw.monad", "2.2.0", [])
+
     def test_the_main_package_must_exist(self):
         self.package("other.2.2.0.nupkg", {"tools/net10.0/any/DotnetToolSettings.xml": FRAMEWORK})
         with self.assertRaisesRegex(Failure, "not leduftw.monad.2.2.0.nupkg"):
             tool_packages(self.out, "leduftw.monad", "2.2.0", [])
+
+
+class ToolInstallTest(unittest.TestCase):
+    def test_only_freshly_packed_packages_can_supply_the_installed_command(self):
+        cfg = config(MONAD)
+        with tempfile.TemporaryDirectory() as temp:
+            work = Path(temp)
+            packages = work / "packages"
+            packages.mkdir()
+            for package_id in ("leduftw.monad", "leduftw.monad.osx-arm64"):
+                (packages / f"{package_id}.2.2.0.nupkg").touch()
+            tools = work / "tools"
+            tools.mkdir()
+            command = tools / ("monad.exe" if registry.os.name == "nt" else "monad")
+            command.touch()
+            with (
+                mock.patch.object(registry, "run") as install,
+                mock.patch.object(registry.build, "check_main_binary") as check,
+            ):
+                registry._check_tool(cfg, "2.2.0", packages, work)
+            args = install.call_args.args[0]
+            self.assertNotIn("--add-source", args)
+            settings = ET.parse(args[args.index("--configfile") + 1]).getroot()
+            self.assertIsNotNone(settings.find("packageSources/clear"))
+            self.assertEqual(settings.find("packageSources/add[@key='packed']").get("value"), str(packages))
+            self.assertEqual(settings.find("packageSources/add[@key='nuget.org']").get("value"), registry.NUGET_SOURCE)
+            self.assertEqual(
+                [
+                    package.get("pattern")
+                    for package in settings.findall("packageSourceMapping/packageSource[@key='packed']/package")
+                ],
+                ["leduftw.monad", "leduftw.monad.osx-arm64"],
+            )
+            self.assertEqual(
+                [
+                    package.get("pattern")
+                    for package in settings.findall("packageSourceMapping/packageSource[@key='nuget.org']/package")
+                ],
+                ["*"],
+            )
+            self.assertEqual(install.call_args.kwargs["env"]["NUGET_PACKAGES"], str(work / "nuget"))
+            check.assert_called_once_with(command, cfg, "2.2.0")
 
 
 if __name__ == "__main__":

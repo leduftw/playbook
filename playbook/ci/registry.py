@@ -104,8 +104,6 @@ def tool_packages(out: Path, package_id: str, version: str, macos_binaries: list
     if not main.is_file():
         raise Failure(f"dotnet pack made {found}, not {main.name}")
     settings = _tool_settings(main)
-    if not settings:
-        raise Failure(f"{main.name} isn't a .NET tool; the project needs <PackAsTool>true</PackAsTool>")
     runtime_ids = [
         package.get("Id", "")
         for _, root in settings
@@ -129,11 +127,16 @@ def tool_packages(out: Path, package_id: str, version: str, macos_binaries: list
 def _tool_settings(package: Path) -> list[tuple[PurePosixPath, ET.Element]]:
     """Each tool folder in a package, with the DotnetToolSettings.xml it holds."""
     with zipfile.ZipFile(package) as bundle:
-        return [
+        settings = [
             (PurePosixPath(name).parent, ET.fromstring(bundle.read(name)))
             for name in bundle.namelist()
             if PurePosixPath(name).name == TOOL_SETTINGS
         ]
+    if not settings or any(
+        root.tag != "DotNetCliTool" or root.find("Commands/Command") is None for _, root in settings
+    ):
+        raise Failure(f"{package.name} isn't a .NET tool; the project needs <PackAsTool>true</PackAsTool>")
+    return settings
 
 
 def _missing_macos_binaries(package: Path, names: list[str]) -> list[str]:
@@ -143,13 +146,14 @@ def _missing_macos_binaries(package: Path, names: list[str]) -> list[str]:
     per platform in tools/any/<runtime>/, and macOS installs the osx-* ones. A
     package naming per-platform packages holds no tool of its own.
     """
+    settings = _tool_settings(package)
     if not names:
         return []
     with zipfile.ZipFile(package) as bundle:
         files = set(bundle.namelist())
     missing: set[str] = set()
-    for folder, settings in _tool_settings(package):
-        if settings.find("RuntimeIdentifierPackages") is not None:
+    for folder, root in settings:
+        if root.find("RuntimeIdentifierPackages") is not None:
             continue
         runtime = folder.name if folder.parent.name == "any" else "any"
         if runtime == "any" or runtime.startswith("osx"):
@@ -163,6 +167,22 @@ def _check_tool(config: Config, version: str, packages: Path, work: Path) -> Non
     assert release is not None
     package_id = release.package_id or config.name
     tools = work / "tools"
+    # Tool installation may also fetch SDK host packages. Allow those from
+    # NuGet, but map every freshly packed ID exclusively to this build. An
+    # additional source alone can select a published copy of the same version.
+    configuration = ET.Element("configuration")
+    sources = ET.SubElement(configuration, "packageSources")
+    ET.SubElement(sources, "clear")
+    ET.SubElement(sources, "add", key="packed", value=str(packages))
+    ET.SubElement(sources, "add", key="nuget.org", value=NUGET_SOURCE)
+    mapping = ET.SubElement(configuration, "packageSourceMapping")
+    packed = ET.SubElement(mapping, "packageSource", key="packed")
+    for package in sorted(packages.glob("*.nupkg")):
+        ET.SubElement(packed, "package", pattern=package.name.removesuffix(f".{version}.nupkg"))
+    online = ET.SubElement(mapping, "packageSource", key="nuget.org")
+    ET.SubElement(online, "package", pattern="*")
+    settings = work / "nuget.config"
+    ET.ElementTree(configuration).write(settings, encoding="utf-8", xml_declaration=True)
     run(
         [
             "dotnet",
@@ -171,13 +191,12 @@ def _check_tool(config: Config, version: str, packages: Path, work: Path) -> Non
             package_id,
             "--version",
             version,
-            "--add-source",
-            str(packages),
+            "--configfile",
+            str(settings),
             "--tool-path",
             str(tools),
         ],
-        # An empty package cache, so an earlier package with the same version
-        # can't stand in for the one just packed.
+        # Cached packages bypass source mapping, so use an empty cache too.
         env={"NUGET_PACKAGES": str(work / "nuget")},
     )
     command = tools / (config.name + (".exe" if os.name == "nt" else ""))
