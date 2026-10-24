@@ -72,17 +72,6 @@ def layout_problem(manifest: str, binary: str) -> str | None:
     )
 
 
-def validation_note(binary: str, version_command: list[str]) -> str:
-    """WinGet validation runs the installed program with no arguments, and a
-    program that needs a terminal or a token exits 1 there. Telling the
-    administrators which command exits 0 clears Validation-Executable-Error."""
-    command = " ".join([f"{binary}.exe", *version_command])
-    return (
-        f"`{binary}.exe` exits 1 when started without arguments in the validation environment. "
-        f"`{command}` exits 0 there and can be used for validation; every release's build runs it as a smoke test."
-    )
-
-
 def pull_request(output: str) -> str | None:
     match = PULL_REQUEST.search(output)
     return match.group(0) if match else None
@@ -97,8 +86,7 @@ def check(config: Config) -> None:
     if manifest is None:
         raise Failure(
             f"{package_id} isn't in winget-pkgs yet. The first version is a one-time manual "
-            f"submission (wingetcreate new <url>), with a PR comment saying `{release.binaries[0]}.exe "
-            f"{' '.join(release.version_command)}` exits 0; later releases update it automatically."
+            "submission (wingetcreate new <url>); later releases update it automatically."
         )
     problem = layout_problem(manifest, release.binaries[0])
     if problem:
@@ -159,16 +147,7 @@ def submit(root: Path, config: Config, version: str) -> None:
     print(result.stdout, result.stderr, sep="\n")
     if result.returncode != 0:
         raise Failure(f"wingetcreate couldn't submit {package_id} {version}")
-    say(f"submitted {package_id} {version} to winget-pkgs; Microsoft's moderators merge it")
-
-    # The update is already submitted, so a missing comment only costs a manual one.
-    url = pull_request(result.stdout + result.stderr)
-    note = validation_note(release.binaries[0], release.version_command)
-    if url is None:
-        warn(f"couldn't find the winget-pkgs PR in wingetcreate's output; comment on it by hand: {note}")
-        return
-    commented = run(["gh", "pr", "comment", url, "--body", note], env={"GH_TOKEN": token}, check=False, capture=True)
-    if commented.returncode != 0:
-        warn(f"couldn't comment on {url}: {commented.stderr.strip()}; comment by hand: {note}")
-        return
-    say(f"told WinGet validation how to run {release.binaries[0]} on {url}")
+    # WinGet's validation starts the program with no arguments. The command-line
+    # rules make that exit 0 and the release PR checks it, so the PR needs no comment.
+    url = pull_request(result.stdout + result.stderr) or "a PR in winget-pkgs"
+    say(f"submitted {package_id} {version} as {url}; Microsoft's moderators merge it")
