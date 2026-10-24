@@ -132,6 +132,7 @@ def main(root: Path) -> None:
     set_output("homebrew", "true" if "homebrew" in channels else "false")
     set_output("winget", "true" if "winget" in channels else "false")
     set_output("registry", (release.registry or "") if release else "")
+    set_output("registry_runner", stacks.registry_runner(release.registry if release else None))
 
     lines = [f"### {config.name}", ""]
     lines.append(f"- checks: {len(checks)} job(s)")

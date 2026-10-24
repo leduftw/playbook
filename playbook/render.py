@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from . import REPOSITORY, ROOT, major_ref
+from . import REPOSITORY, ROOT, major_ref, stacks
 from .config import Config
 
 TEMPLATES = ROOT / "templates"
@@ -65,6 +65,7 @@ def managed_files(root: Path, config: Config, self_repo: bool = False) -> dict[s
         "title": title,
         "ref": script_ref,
         "registry_action": f"{REPOSITORY}/.github/actions/registry@{ref}",
+        "registry_runner": stacks.registry_runner(registry),
     }
     flags = {"registry": bool(registry)}
 

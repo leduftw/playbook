@@ -51,7 +51,9 @@ A published repo is one other people install. Today that's
   and reported version, checks the main binary against the
   [command-line rules](#how-command-line-tools-behave), runs the installers
   against it, installs the Homebrew formula from a scratch tap, and dry-runs
-  the registry upload.
+  the registry upload. A .NET tool is packed for NuGet on a Mac, so its macOS
+  packages can carry Mac-only binaries, then installed from those packages and
+  held to the same checks as the main binary.
 - **Merging it publishes:** a draft release gets every file, `SHA256SUMS` and a
   signed provenance record, then is published, which creates the tag. Releases
   are locked once published, so a broken one is fixed by shipping the next
@@ -61,8 +63,9 @@ A published repo is one other people install. Today that's
   - one-line installers:
     `curl -fsSL https://github.com/leduftw/<name>/releases/latest/download/<name>-installer.sh | sh`
     and `irm https://github.com/leduftw/<name>/releases/latest/download/<name>-installer.ps1 | iex`
-  - the language registry (crates.io or NuGet) through trusted publishing, so
-    no registry token is stored anywhere
+  - the language registry through trusted publishing, so no registry token is
+    stored anywhere: crates.io (`cargo install <name> --locked`) or NuGet
+    (`dotnet tool install -g <package id>`)
 - **A failed channel is retried without a new release:** once the cause is
   fixed (an expired token, say), `gh workflow run playbook --ref main` updates
   the channels of the latest release from its published files. Each channel
@@ -133,14 +136,16 @@ its `Cellar`.
 | Homebrew | `/Cellar/<name>/` in the path | `brew upgrade leduftw/tap/<name>` |
 | WinGet | `\Microsoft\WinGet\` in the path | `winget upgrade --id leduftw.<name>` |
 | crates.io | Cargo's `bin` folder | `cargo install <name> --locked` |
+| NuGet | `.store/<package id>/` in the path | `dotnet tool update --tool-path <folder> <package id>`, for the folder holding that `.store` |
 | A local build | `target/` or `bin/Debug` in the path | nothing: it refuses |
 | The one-line installer | anywhere else | the release's installer, into the same folder |
 
 If it's already the latest version, `update` says so and exits 0. A release
-reaches WinGet only after Microsoft reviews it, which can take days, so when
-the newest version isn't on WinGet yet, `update` says that instead of calling
-itself current. Windows can't replace a running program, so there `update`
-starts `winget` or the installer and exits.
+reaches WinGet only after Microsoft reviews it, which can take days, and NuGet
+once it has checked and indexed the packages, which takes minutes. When the
+newest version isn't there yet, `update` says that instead of calling itself
+current. Windows can't replace a running program, so there `update` starts
+`winget`, `dotnet tool update` or the installer and exits.
 
 Every release PR checks a published tool's behavior against these rules, on
 all six platforms, with its real binary: `-h`, `--help` and `help` print the

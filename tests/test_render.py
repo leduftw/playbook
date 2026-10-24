@@ -76,6 +76,18 @@ class ManagedFilesTest(unittest.TestCase):
         self.assertIn(f"leduftw/playbook/.github/actions/registry@{major_ref()}", workflow)
         self.assertIn(".github/release.yml", files)
 
+    def test_nuget_uploads_run_on_a_mac_and_crates_io_on_linux(self):
+        for repo, runner in ((MONAD, "macos-15"), (DBIRD, "ubuntu-24.04")):
+            with self.subTest(runner=runner):
+                workflow = render.managed_files(self.root, config(repo))[".github/workflows/playbook.yml"]
+                job = workflow.split("\n  registry:", 1)[1]
+                self.assertIn(f"runs-on: {runner}", job)
+
+    def test_the_channels_dry_run_packs_where_the_upload_will(self):
+        pipeline = (ROOT / ".github" / "workflows" / "pipeline.yml").read_text()
+        job = pipeline.split("\n  channels-dry-run:", 1)[1].split("\n  checks:", 1)[0]
+        self.assertIn("runs-on: ${{ needs.plan.outputs.registry_runner }}", job)
+
     def test_the_playbook_calls_its_own_workflows_from_the_same_commit(self):
         files = render.managed_files(self.root, config(LOCAL), self_repo=True)
         workflow = files[".github/workflows/playbook.yml"]
@@ -139,6 +151,7 @@ class AgentsTest(unittest.TestCase):
 
     def test_only_published_tools_have_update(self):
         self.assertIn("`update` (alias `upgrade`)", render.agents_section(config(MONAD)))
+        self.assertIn("`dotnet tool update`", render.agents_section(config(MONAD)))
         self.assertNotIn("`update`", render.agents_section(config(LOCAL)))
 
     def test_published_tools_hear_that_release_prs_check_the_rules(self):

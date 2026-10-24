@@ -34,7 +34,7 @@ A command-line tool here follows the [Command Line Interface Guidelines](https:/
 - Help uses the colors of Python 3.14's `argparse`, only in a terminal, and none with `NO_COLOR`, `TERM=dumb` or `--no-color`.
 - Arguments are parsed by the language's standard parser (`argparse`, `clap`, `System.CommandLine`), never by hand.
 @@#published@@
-- `update` (alias `upgrade`) moves to the latest release through whatever installed the tool: `brew upgrade`, `winget upgrade`, `cargo install`, or the release's own installer.
+- `update` (alias `upgrade`) moves to the latest release through whatever installed the tool: `brew upgrade`, `winget upgrade`, `cargo install`, `dotnet tool update`, or the release's own installer.
 - Every release PR checks these rules against the real binaries on all six platforms, so a release that breaks them doesn't ship.
 @@/published@@
 

@@ -258,22 +258,7 @@ def smoke(root: Path, config: Config, target: str, version: str, dist: Path) -> 
         for binary in binaries:
             _check_binary(binary, target)
         say(f"{archive.name}: files, CPU and linking are right")
-
-        reported = _run_binary([str(binaries[0]), *release.version_command])
-        if release.version_output is not None:
-            wanted = release.version_output.replace("{version}", version)
-            if reported != wanted:
-                raise Failure(f"{binaries[0].name} reported {reported!r}; expected {wanted!r}")
-        elif version not in reported:
-            raise Failure(f"{binaries[0].name} reported {reported!r}, without {version}")
-        say(f"{binaries[0].name} reports {reported!r}")
-
-        problems = command_line.check(binaries[0], config.name, version)
-        if problems:
-            raise Failure(
-                f"{binaries[0].name} breaks the playbook's command-line rules:\n  - " + "\n  - ".join(problems)
-            )
-        say(f"{binaries[0].name} follows the command-line rules")
+        check_main_binary(binaries[0], config, version)
 
         groups = ["all"] + (["unix"] if os_name != "windows" else []) + [os_name]
         for group in groups:
@@ -286,6 +271,25 @@ def smoke(root: Path, config: Config, target: str, version: str, dist: Path) -> 
                 say(f"smoke ({group}): {filled}")
                 run([_bash(), "-c", filled], cwd=root)
     say(f"{archive.name} passed its smoke test")
+
+
+def check_main_binary(binary: Path, config: Config, version: str) -> None:
+    """The main binary reports the release's version and follows the command-line rules."""
+    release = config.release
+    assert release is not None
+    reported = _run_binary([str(binary), *release.version_command])
+    if release.version_output is not None:
+        wanted = release.version_output.replace("{version}", version)
+        if reported != wanted:
+            raise Failure(f"{binary.name} reported {reported!r}; expected {wanted!r}")
+    elif version not in reported:
+        raise Failure(f"{binary.name} reported {reported!r}, without {version}")
+    say(f"{binary.name} reports {reported!r}")
+
+    problems = command_line.check(binary, config.name, version)
+    if problems:
+        raise Failure(f"{binary.name} breaks the playbook's command-line rules:\n  - " + "\n  - ".join(problems))
+    say(f"{binary.name} follows the command-line rules")
 
 
 def _run_binary(command: list[str]) -> str:

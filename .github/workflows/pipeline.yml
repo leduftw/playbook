@@ -52,6 +52,7 @@ jobs:
       homebrew: ${{ steps.plan.outputs.homebrew }}
       winget: ${{ steps.plan.outputs.winget }}
       registry: ${{ steps.plan.outputs.registry }}
+      registry_runner: ${{ steps.plan.outputs.registry_runner }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -232,7 +233,8 @@ jobs:
     name: channels dry run
     needs: plan
     if: needs.plan.outputs.mode == 'verify' || needs.plan.outputs.mode == 'publish'
-    runs-on: ubuntu-24.04
+    # The runner the registry upload uses, so the dry run packs what it would.
+    runs-on: ${{ needs.plan.outputs.registry_runner }}
     permissions:
       contents: read
     steps:
