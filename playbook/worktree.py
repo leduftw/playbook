@@ -41,6 +41,17 @@ def in_linked_worktree(path: Path) -> bool:
     return Path(git_dir) != Path(common)
 
 
+def checkout_of(root: Path, branch: str) -> Path | None:
+    """The working tree that has ``branch`` checked out: a linked worktree, the primary checkout, or None."""
+    path = None
+    for line in git("worktree", "list", "--porcelain", cwd=root).splitlines():
+        if line.startswith("worktree "):
+            path = Path(line.removeprefix("worktree "))
+        elif line == f"branch refs/heads/{branch}":
+            return path
+    return None
+
+
 def github_user() -> str:
     return gh("api", "user", "--jq", ".login")
 
@@ -148,32 +159,47 @@ def _pr(cwd: Path, pr: str | None) -> dict:
     return json.loads(result.stdout)
 
 
+def catch_up(checkout: Path) -> None:
+    """Push the branch from its own checkout, merging main into it first if main has moved on."""
+    if git("status", "--porcelain", cwd=checkout):
+        raise Failure(f"{checkout} has uncommitted changes; commit them (or drop them) and run finish again")
+    git("push", "--quiet", "-u", "origin", "HEAD", cwd=checkout)
+
+    git("fetch", "--quiet", "origin", "main", cwd=checkout)
+    behind = run(["git", "merge-base", "--is-ancestor", "origin/main", "HEAD"], cwd=checkout, check=False)
+    if behind.returncode != 0:
+        merged = run(["git", "merge", "--no-edit", "origin/main"], cwd=checkout, check=False, capture=True)
+        if merged.returncode != 0:
+            raise Failure(
+                f"merging main into the branch hit conflicts in {checkout}; resolve them, commit, and run finish again"
+            )
+        git("push", "--quiet", "origin", "HEAD", cwd=checkout)
+        say("merged the latest main into the branch; checks start again")
+        time.sleep(5)
+
+
 def finish(pr: str | None = None) -> None:
     cwd = Path.cwd()
     root = primary_checkout(cwd)
-    branch = git("rev-parse", "--abbrev-ref", "HEAD", cwd=cwd)
-    if branch == "main" and pr is None:
+    if pr is None and git("rev-parse", "--abbrev-ref", "HEAD", cwd=cwd) == "main":
         raise Failure("you're on main; run finish from the change's worktree, or pass the PR number")
     data = _pr(cwd, pr)
     branch = data["headRefName"]
     url = data["url"]
+    here = repository(root)
+    if not url.lower().startswith(f"https://github.com/{here.lower()}/pull/"):
+        raise Failure(f"{url} isn't a PR of {here}; run finish from that repo's checkout")
+    # Started from anywhere in the repo, finish acts on the branch's own
+    # checkout: never on main, and never on another change's worktree.
+    checkout = checkout_of(root, branch)
 
     if data["state"] == "OPEN":
         if data["isDraft"]:
             raise Failure(f"{url} is a draft; mark it ready for review first")
-        if git("status", "--porcelain", cwd=cwd):
-            raise Failure("there are uncommitted changes; commit them (or drop them) and run finish again")
-        git("push", "--quiet", "-u", "origin", "HEAD", cwd=cwd)
-
-        git("fetch", "--quiet", "origin", "main", cwd=cwd)
-        behind = run(["git", "merge-base", "--is-ancestor", "origin/main", "HEAD"], cwd=cwd, check=False)
-        if behind.returncode != 0:
-            merged = run(["git", "merge", "--no-edit", "origin/main"], cwd=cwd, check=False, capture=True)
-            if merged.returncode != 0:
-                raise Failure("merging main into the branch hit conflicts; resolve them, commit, and run finish again")
-            git("push", "--quiet", "origin", "HEAD", cwd=cwd)
-            say("merged the latest main into the branch; checks start again")
-            time.sleep(5)
+        if checkout is None:
+            say(f"{branch} isn't checked out here, so it lands as GitHub has it")
+        else:
+            catch_up(checkout)
 
         wait_for_checks(url)
         for attempt in range(1, 6):
@@ -195,7 +221,7 @@ def finish(pr: str | None = None) -> None:
     else:
         raise Failure(f"{url} is closed without merging; nothing to land")
 
-    cleanup(root, cwd, branch)
+    cleanup(root, checkout, branch)
     for issue in data.get("closingIssuesReferences") or []:
         state = gh("issue", "view", str(issue["number"]), "--json", "state", "--jq", ".state", cwd=root)
         if state != "CLOSED":
@@ -224,19 +250,21 @@ def remove_empty_folders(folder: Path, worktrees: Path) -> None:
         directory.rmdir()
 
 
-def cleanup(root: Path, cwd: Path, branch: str) -> None:
-    linked = in_linked_worktree(cwd)
-    if linked:
-        git("worktree", "remove", str(cwd), cwd=root)
-        say(f"removed the worktree {cwd}")
-        remove_empty_folders(cwd.parent, WORKTREES)
-    else:
+def cleanup(root: Path, checkout: Path | None, branch: str) -> None:
+    if checkout is not None and in_linked_worktree(checkout):
+        git("worktree", "remove", str(checkout), cwd=root)
+        say(f"removed the worktree {checkout}")
+        remove_empty_folders(checkout.parent, WORKTREES)
+    elif checkout is not None:  # the branch was checked out in the primary checkout itself
         git("checkout", "--quiet", "main", cwd=root)
-    run(["git", "branch", "-D", branch], cwd=root, check=False, capture=True)
+    local = run(["git", "rev-parse", "--verify", "-q", f"refs/heads/{branch}"], cwd=root, check=False, capture=True)
+    if local.returncode == 0:
+        git("branch", "-D", branch, cwd=root)
     run(["git", "push", "--quiet", "origin", "--delete", branch], cwd=root, check=False, capture=True)
-    if git("rev-parse", "--abbrev-ref", "HEAD", cwd=root) == "main":
+    pulled = git("rev-parse", "--abbrev-ref", "HEAD", cwd=root) == "main"
+    if pulled:
         git("pull", "--quiet", "--ff-only", "origin", "main", cwd=root)
     else:
         warn("the primary checkout isn't on main, so it wasn't pulled")
     git("fetch", "--quiet", "--prune", "origin", cwd=root)
-    say(f"deleted {branch} and pulled main")
+    say(f"deleted {branch} and pulled main" if pulled else f"deleted {branch}")

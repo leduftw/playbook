@@ -1,8 +1,22 @@
+import contextlib
+import io
+import os
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
-from playbook.worktree import remove_empty_folders, slugify
+from playbook.worktree import checkout_of, cleanup, remove_empty_folders, slugify
+
+ENV = {
+    **os.environ,
+    "GIT_AUTHOR_NAME": "test",
+    "GIT_AUTHOR_EMAIL": "test@example.com",
+    "GIT_COMMITTER_NAME": "test",
+    "GIT_COMMITTER_EMAIL": "test@example.com",
+    "GIT_CONFIG_GLOBAL": os.devnull,
+}
 
 
 class SlugTest(unittest.TestCase):
@@ -51,6 +65,54 @@ class RemoveEmptyFoldersTest(unittest.TestCase):
         elsewhere.mkdir()
         remove_empty_folders(elsewhere, self.worktrees)
         self.assertTrue(elsewhere.is_dir())
+
+
+class CheckoutTest(unittest.TestCase):
+    """finish finds the PR's branch by name, whichever checkout it was started from."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        base = Path(self.temp.name).resolve()
+        self.root = base / "repo"
+        self.worktrees = base / ".worktrees"
+        self.enterContext(mock.patch.dict(os.environ, ENV))
+        self.enterContext(mock.patch("playbook.worktree.WORKTREES", self.worktrees))
+        self.git("init", "-q", "--bare", str(base / "origin.git"), cwd=base)
+        self.git("init", "-q", "-b", "main", str(self.root), cwd=base)
+        self.git("commit", "-q", "--allow-empty", "-m", "start")
+        self.git("remote", "add", "origin", str(base / "origin.git"))
+        self.git("push", "-q", "-u", "origin", "main")
+        self.change = self.start("dev/test/1-change")
+        self.other = self.start("dev/test/2-other")
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def git(self, *args, cwd=None):
+        result = subprocess.run(["git", *args], cwd=cwd or self.root, capture_output=True, text=True, check=True)
+        return result.stdout.strip()
+
+    def start(self, branch):
+        """A pushed branch in its own worktree, the way playbook start leaves it."""
+        path = self.worktrees / "repo" / branch.rsplit("/", 1)[1]
+        self.git("worktree", "add", "-q", "-b", branch, str(path))
+        self.git("push", "-q", "origin", branch, cwd=path)
+        return path
+
+    def test_a_branch_is_found_wherever_it_is_checked_out(self):
+        self.assertEqual(checkout_of(self.root, "dev/test/1-change"), self.change)
+        self.assertEqual(checkout_of(self.root, "main"), self.root)
+        self.git("branch", "dev/test/3-not-checked-out")
+        self.assertIsNone(checkout_of(self.root, "dev/test/3-not-checked-out"))
+
+    def test_cleanup_from_the_primary_checkout_removes_only_the_finished_change(self):
+        with contextlib.redirect_stdout(io.StringIO()) as printed:
+            cleanup(self.root, checkout_of(self.root, "dev/test/1-change"), "dev/test/1-change")
+        self.assertFalse(self.change.exists())
+        self.assertEqual(self.git("branch", "--list", "dev/test/1-change"), "")
+        self.assertEqual(self.git("ls-remote", "--heads", "origin", "dev/test/1-change"), "")
+        self.assertEqual(checkout_of(self.root, "dev/test/2-other"), self.other)
+        self.assertIn("deleted dev/test/1-change and pulled main", printed.getvalue())
 
 
 if __name__ == "__main__":
