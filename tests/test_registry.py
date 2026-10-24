@@ -146,6 +146,50 @@ class ToolPackagesTest(unittest.TestCase):
         with self.assertRaisesRegex(Failure, "not leduftw.monad.2.2.0.nupkg"):
             tool_packages(self.out, "leduftw.monad", "2.2.0", [])
 
+    def test_each_platform_package_gets_the_archive_checks_for_its_target(self):
+        self.per_platform()
+        packages = tool_packages(self.out, "leduftw.monad", "2.2.0", ["monad-audiotap"])
+        with mock.patch.object(registry.build, "check_binary") as check:
+            registry.check_binaries(packages, config(MONAD).release)
+        self.assertEqual(
+            [(call.args[0].name, call.args[1]) for call in check.call_args_list],
+            [("monad", "linux-x64"), ("monad", "macos-arm64"), ("monad-audiotap", "macos-arm64")],
+        )
+
+    def test_a_platform_package_without_its_binary_fails(self):
+        self.per_platform()
+        self.package("leduftw.monad.linux-x64.2.2.0.nupkg", {"tools/any/linux-x64/DotnetToolSettings.xml": EXECUTABLE})
+        packages = tool_packages(self.out, "leduftw.monad", "2.2.0", ["monad-audiotap"])
+        with (
+            mock.patch.object(registry.build, "check_binary"),
+            self.assertRaisesRegex(Failure, "linux-x64.2.2.0.nupkg doesn't hold monad"),
+        ):
+            registry.check_binaries(packages, config(MONAD).release)
+
+    def test_a_failed_binary_check_names_the_package(self):
+        self.per_platform()
+        packages = tool_packages(self.out, "leduftw.monad", "2.2.0", ["monad-audiotap"])
+        broken = Failure("monad links to Homebrew paths, so it won't run elsewhere")
+        with (
+            mock.patch.object(registry.build, "check_binary", side_effect=broken),
+            self.assertRaisesRegex(Failure, r"^leduftw\.monad\.linux-x64\.2\.2\.0\.nupkg: monad links to Homebrew"),
+        ):
+            registry.check_binaries(packages, config(MONAD).release)
+
+    def test_a_runtime_the_release_doesnt_build_is_left_unchecked(self):
+        name = "leduftw.monad.linux-musl-x64.2.2.0.nupkg"
+        self.package(
+            name,
+            {"tools/any/linux-musl-x64/DotnetToolSettings.xml": EXECUTABLE, "tools/any/linux-musl-x64/monad": ""},
+        )
+        with (
+            mock.patch.object(registry.build, "check_binary") as check,
+            mock.patch.object(registry, "warn") as warned,
+        ):
+            registry.check_binaries([self.out / name], config(MONAD).release)
+        check.assert_not_called()
+        self.assertIn("linux-musl-x64", warned.call_args.args[0])
+
 
 class ToolInstallTest(unittest.TestCase):
     def test_only_freshly_packed_packages_can_supply_the_installed_command(self):

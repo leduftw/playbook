@@ -52,8 +52,11 @@ A published repo is one other people install. Today that's
   [command-line rules](#how-command-line-tools-behave), runs the installers
   against it, installs the Homebrew formula from a scratch tap, and dry-runs
   the registry upload. A .NET tool is packed for NuGet on a Mac, so its macOS
-  packages can carry Mac-only binaries, then installed from those packages and
-  held to the same checks as the main binary.
+  packages can carry Mac-only binaries, and each platform's package gets the
+  archive checks. The playbook signs an archive's unsigned macOS binaries
+  itself but can't reach inside a package, so a tool's build signs its own
+  Mac-only binaries (ad hoc is enough). The tool is then installed from those
+  packages and held to the same checks as the main binary.
 - **Merging it publishes:** a draft release gets every file, `SHA256SUMS` and a
   signed provenance record, then is published, which creates the tag. Releases
   are locked once published, so a broken one is fixed by shipping the next

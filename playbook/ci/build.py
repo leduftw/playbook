@@ -15,6 +15,7 @@ import re
 import shutil
 import struct
 import subprocess
+import sys
 import tarfile
 import tempfile
 import time
@@ -256,7 +257,7 @@ def smoke(root: Path, config: Config, target: str, version: str, dist: Path) -> 
             raise Failure(f"{archive.name} holds the wrong files\n  expected: {expected}\n  actual:   {actual}")
         binaries = [payload / name for name in executable_names(release, target)]
         for binary in binaries:
-            _check_binary(binary, target)
+            check_binary(binary, target)
         say(f"{archive.name}: files, CPU and linking are right")
         check_main_binary(binaries[0], config, version)
 
@@ -311,7 +312,8 @@ _ELF_MACHINES = {"linux-x64": 0x3E, "linux-arm64": 0xB7}
 _MACHO_ARCHS = {"macos-arm64": "arm64", "macos-x64": "x86_64"}
 
 
-def _check_binary(binary: Path, target: str) -> None:
+def check_binary(binary: Path, target: str) -> None:
+    """The binary is for the target's CPU and runs without anything a fresh machine lacks."""
     os_name = stacks.TARGETS[target]["os"]
     with open(binary, "rb") as handle:
         data = handle.read(4096)
@@ -332,9 +334,12 @@ def _check_binary(binary: Path, target: str) -> None:
         machine = struct.unpack_from("<H", data, 18)[0]
         if machine != _ELF_MACHINES[target]:
             raise Failure(f"{binary.name} is built for machine {machine:#x}, not {target}")
-        linked = subprocess.run(["ldd", str(binary)], capture_output=True, text=True)
-        if "not found" in linked.stdout:
-            raise Failure(f"{binary.name} needs libraries this system lacks:\n{linked.stdout}")
+        # Only Linux can resolve a Linux binary's libraries; a NuGet package's
+        # Linux binaries are checked from a Mac.
+        if sys.platform.startswith("linux"):
+            linked = subprocess.run(["ldd", str(binary)], capture_output=True, text=True)
+            if "not found" in linked.stdout:
+                raise Failure(f"{binary.name} needs libraries this system lacks:\n{linked.stdout}")
     else:
         archs = output(["lipo", "-archs", str(binary)]).split()
         if _MACHO_ARCHS[target] not in archs:

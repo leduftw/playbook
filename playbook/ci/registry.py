@@ -20,8 +20,9 @@ import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path, PurePosixPath
 
-from ..config import Config
-from ..util import Failure, git, run, say, set_output
+from .. import stacks
+from ..config import Config, Release
+from ..util import Failure, git, run, say, set_output, warn
 from . import build, winget
 
 NUGET_SOURCE = "https://api.nuget.org/v3/index.json"
@@ -94,7 +95,9 @@ def _pack(root: Path, config: Config, version: str, out: Path) -> list[Path]:
         ],
         cwd=root,
     )
-    return tool_packages(out, package_id, version, release.macos_binaries)
+    packages = tool_packages(out, package_id, version, release.macos_binaries)
+    check_binaries(packages, release)
+    return packages
 
 
 def tool_packages(out: Path, package_id: str, version: str, macos_binaries: list[str]) -> list[Path]:
@@ -161,6 +164,40 @@ def _missing_macos_binaries(package: Path, names: list[str]) -> list[str]:
     return sorted(missing)
 
 
+def check_binaries(packages: list[Path], release: Release) -> None:
+    """Each per-platform package's binaries pass the checks the release archives get.
+
+    Only runtimes the release builds have a target to check against. A tool
+    built for every platform has no per-platform packages; the install check
+    is what runs it.
+    """
+    targets = {stacks.TARGETS[target]["dotnet"]: target for target in release.targets}
+    checked = 0
+    with tempfile.TemporaryDirectory(prefix="playbook-nuget-binaries-") as temp:
+        for package in packages:
+            with zipfile.ZipFile(package) as bundle:
+                files = set(bundle.namelist())
+                for folder, _ in _tool_settings(package):
+                    if folder.parent.name != "any":
+                        continue
+                    target = targets.get(folder.name)
+                    if target is None:
+                        warn(f"{package.name} is for {folder.name}, which the release doesn't build; not checked")
+                        continue
+                    for name in build.executable_names(release, target):
+                        entry = (folder / name).as_posix()
+                        if entry not in files:
+                            raise Failure(f"{package.name} doesn't hold {name}")
+                        binary = Path(bundle.extract(entry, Path(temp) / package.name))
+                        try:
+                            build.check_binary(binary, target)
+                        except Failure as error:
+                            raise Failure(f"{package.name}: {error}") from error
+                        checked += 1
+    if checked:
+        say(f"{checked} binaries in the per-platform packages pass the release archives' checks")
+
+
 def _check_tool(config: Config, version: str, packages: Path, work: Path) -> None:
     """Installs the packed tool the way people will, and checks what they'd run."""
     release = config.release
@@ -210,8 +247,6 @@ def publish(root: Path, config: Config) -> None:
     release = config.release
     if release is None or not release.registry:
         raise Failure("this repo doesn't publish to a registry")
-    from .. import stacks
-
     version = stacks.read_version(root, release)
     if release.registry == "crates-io":
         if not os.environ.get("CARGO_REGISTRY_TOKEN"):
