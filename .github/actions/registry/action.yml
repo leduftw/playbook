@@ -19,12 +19,17 @@ runs:
       with:
         ref: ${{ inputs.sha }}
         persist-credentials: false
+    # The playbook needs Python 3.11 or newer, which isn't every runner's own
+    # python3; NuGet uploads run on macOS.
+    - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      with:
+        python-version: "3.13"
     - name: Read the release settings
       id: settings
       shell: bash
       run: python3 "$GITHUB_ACTION_PATH/../../../bin/playbook" ci registry-info
     - name: Install Linux packages
-      if: steps.settings.outputs.apt != ''
+      if: runner.os == 'Linux' && steps.settings.outputs.apt != ''
       shell: bash
       run: sudo apt-get update -q && sudo apt-get install -q -y --no-install-recommends ${{ steps.settings.outputs.apt }}
     - name: Set up Rust

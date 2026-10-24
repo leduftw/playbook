@@ -39,6 +39,11 @@ actionlint
 - **The registry upload is a job in each repo's own `playbook.yml`.** crates.io and
   NuGet match trusted publishing against the workflow file that publishes; neither
   documents support for a workflow in another repo.
+- **NuGet packages are packed on a Mac.** A .NET tool built per platform is one
+  package per runtime, and only a Mac can build the Mac-only binaries a macOS
+  package carries (`macos-binaries`, such as monad's Swift capture helper). So a
+  NuGet repo's channels dry run and registry job run on macOS; crates.io uploads
+  are source and stay on Linux.
 - **A change to anything that renders into repos ships as a release.** Merged
   changes reach repos only when `VERSION` moves. A change that needs repos to change
   is a new major.

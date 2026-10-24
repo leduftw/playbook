@@ -63,6 +63,12 @@ TARGETS = {
 # checks use the current LTS.
 CHECK_RUNNERS = {"linux": "ubuntu-24.04", "macos": "macos-15", "windows": "windows-2025"}
 
+# Where a registry upload is packed, dry-run and pushed. A .NET tool's macOS
+# packages are built on a Mac: only a Mac can build the Mac-only binaries they
+# carry (release.macos-binaries), and the dry run installs the package for the
+# Mac it runs on.
+REGISTRY_RUNNERS = {"crates-io": CHECK_RUNNERS["linux"], "nuget": CHECK_RUNNERS["macos"]}
+
 # Tools the checks run, pinned so a new release of one can't turn every repo
 # red overnight; they move with a playbook release.
 RUFF = "ruff@0.17.0"
@@ -76,6 +82,10 @@ DOTNET_NOTICES = {
 
 def archive_name(name: str, target: str) -> str:
     return f"{name}-{target}.{TARGETS[target]['archive']}"
+
+
+def registry_runner(registry: str | None) -> str:
+    return REGISTRY_RUNNERS.get(registry or "", CHECK_RUNNERS["linux"])
 
 
 # --- checks -------------------------------------------------------------

@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from playbook.ci.build import EXECUTABLE, REGULAR, expected_files, extract, smoke, write_archive
+from playbook.ci.build import EXECUTABLE, REGULAR, check_binary, expected_files, extract, smoke, write_archive
 from playbook.util import Failure
 from tests.fixtures import DBIRD, MONAD, config
 from tests.test_command_line import TOOL
@@ -60,10 +60,28 @@ class ArchiveTest(unittest.TestCase):
         write_archive(self.stage, self.modes, archive, 1_700_000_000)
         # It is a script in this test; all the smoke test's process calls are real.
         with (
-            mock.patch("playbook.ci.build._check_binary"),
+            mock.patch("playbook.ci.build.check_binary"),
             self.assertRaisesRegex(Failure, r"`tool --not-an-option-of-this-tool` exited 1, not 2"),
         ):
             smoke(self.work, cfg, "linux-x64", "1.2.3", self.work)
+
+
+class CheckBinaryTest(unittest.TestCase):
+    def test_only_linux_resolves_a_linux_binarys_libraries(self):
+        with tempfile.TemporaryDirectory() as temp:
+            binary = Path(temp) / "tool"
+            # An ELF header: class, byte order and version, then e_type at
+            # offset 16 and e_machine at 18 (0x3E, x86-64).
+            binary.write_bytes(b"\x7fELF\x02\x01\x01" + bytes(9) + b"\x02\x00\x3e\x00" + bytes(44))
+            for platform, resolves in (("darwin", False), ("linux", True)):
+                with (
+                    self.subTest(platform=platform),
+                    mock.patch("playbook.ci.build.sys.platform", platform),
+                    mock.patch("playbook.ci.build.subprocess.run") as ldd,
+                ):
+                    ldd.return_value.stdout = ""
+                    check_binary(binary, "linux-x64")
+                    self.assertEqual(ldd.called, resolves)
 
 
 class ExpectedFilesTest(unittest.TestCase):

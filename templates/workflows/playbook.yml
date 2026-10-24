@@ -37,7 +37,7 @@ jobs:
     # Runs even when another channel failed, so one broken channel can't
     # hold back the registry.
     if: ${{ !cancelled() && needs.playbook.outputs.released == 'true' }}
-    runs-on: ubuntu-24.04
+    runs-on: @@registry_runner@@
     environment: release
     permissions:
       contents: read
