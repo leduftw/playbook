@@ -70,6 +70,10 @@ actionlint
   and commits don't, and GitHub would copy the title. So `finish`, `sync`'s auto-merge
   and the pipeline's Dependabot job all pass `--subject`, and anything new that merges
   a PR must too.
+- **Issue titles are held by `start` and `audit`, not by a workflow.** GitHub can't
+  require a check on an issue, and every change passes through `start` anyway. A
+  title that opens with a name, such as `dbird`, needs rewording rather than a
+  capital, so `start` refuses and leaves the fix to whoever wrote it.
 - **The workflow is called `CI`, but its file stays `playbook.yml`.** The README badge
   shows the display name, and crates.io, NuGet and PyPI match trusted publishing
   against the file name. `gh workflow run` and `workflow_run` triggers go by the
@@ -88,7 +92,7 @@ The facts about this repo live in `.github/playbook.toml`. Everything in this se
 
 ### Every change
 
-1. **Start from an issue.** Reuse the issue that describes the change, or create one assigned to `leduftw` with at least one label.
+1. **Start from an issue.** Reuse the issue that describes the change, or create one assigned to `leduftw` with at least one label. Its title starts with a capital letter, or `playbook start` refuses it.
 2. **Work in your own worktree.** Run `playbook start <issue>`: it creates `~/Developer/.worktrees/playbook/<issue>-<slug>` on branch `dev/leduftw/<issue>-<slug>`, based on the latest `main`. Work only there. Another session may be working at the same time, so never edit the primary checkout; it stays on `main` and only moves with `git pull`.
 3. **Commit and push** each finished slice to that branch, without pausing for confirmation.
 4. **Open the PR** with `gh pr create --base main`. Its title follows the PR title style below. Put `Closes #<issue>` in the body when the PR fully resolves the issue.

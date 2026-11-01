@@ -16,7 +16,9 @@ repo what a release contains). Everything else comes from this repo.
 - **One worktree per change.** `playbook start <issue>` creates
   `~/Developer/.worktrees/<repo>/<issue>-<slug>` on branch
   `dev/leduftw/<issue>-<slug>`. The primary checkout stays on `main`.
-- **Every change starts from an issue** and lands as a PR that links it.
+- **Every change starts from an issue** and lands as a PR that links it. An
+  issue's title starts with a capital letter: `playbook start` refuses one that
+  doesn't, and `playbook audit` reports open ones.
 - **`playbook finish` lands it:** waits for the checks, merges `main` in if it
   moved, squash-merges, deletes the worktree and branch, pulls `main`, and
   confirms the issue closed.
@@ -220,7 +222,7 @@ the commands, `playbook help <command>` shows one command's options, and
 | `playbook new <name> --published\|--local --stack <stack> --description "..." [--topics "..."]` | Starts a repo that follows the playbook |
 | `playbook sync [--here \| <repo>... \| --all]` | Brings the playbook's files in a repo up to date |
 | `playbook settings [<repo>... \| --all]` | Applies the shared GitHub settings |
-| `playbook audit [--here \| <repo>... \| --all]` | Reports anything that differs from the playbook, including missing or misleading topics, a README that doesn't follow the standard, README badges that point at removed workflows, and Dependabot PRs waiting more than a week |
+| `playbook audit [--here \| <repo>... \| --all]` | Reports anything that differs from the playbook, including missing or misleading topics, a README that doesn't follow the standard, README badges that point at removed workflows, open issues whose title has no capital, and Dependabot PRs waiting more than a week |
 
 ## Starting a repo
 

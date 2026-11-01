@@ -15,7 +15,7 @@ import unicodedata
 from pathlib import Path
 
 from .config import ConfigError, load
-from .util import Failure, commit_subject, gh, gh_json, git, repository, run, say, warn
+from .util import Failure, capitalized, commit_subject, gh, gh_json, git, repository, run, say, warn
 
 WORKTREES = Path(os.environ.get("PLAYBOOK_WORKTREES", Path.home() / "Developer" / ".worktrees"))
 
@@ -79,6 +79,11 @@ def start(issue: int) -> Path:
     data = gh_json("issue", "view", str(issue), "--json", "title,state,url", cwd=root)
     if data["state"] != "OPEN":
         raise Failure(f"issue #{issue} is {data['state'].lower()}; reopen it or pick an open one")
+    if not capitalized(data["title"]):
+        raise Failure(
+            f"issue #{issue}'s title must start with a capital letter: {data['title']}\n"
+            f'fix it with `gh issue edit {issue} --title "..."`, then run this again'
+        )
     slug = f"{issue}-{slugify(data['title'])}"
     branch = f"dev/{github_user()}/{slug}"
     path = WORKTREES / name / slug

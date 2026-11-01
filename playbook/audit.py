@@ -1,9 +1,10 @@
 """playbook audit: does a repo still match the playbook?
 
 Checks the repo's settings on GitHub, its ruleset and labels, the files the
-playbook owns, its README and Dependabot PRs waiting more than a week. For
-published repos it also checks topics, locked releases, the release environment
-and the secrets each channel needs. Nothing is changed.
+playbook owns, its README, the titles of its open issues and Dependabot PRs
+waiting more than a week. For published repos it also checks topics, locked
+releases, the release environment and the secrets each channel needs. Nothing is
+changed.
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ from . import readme, render, topics, version
 from .config import ConfigError, load
 from .settings import LABELS, REPO_SETTINGS, REQUIRED_CHECKS, find_ruleset, missing_release_setup, ruleset_body
 from .sync import _is_playbook, clone
-from .util import Failure, gh_json, run, say
+from .util import Failure, capitalized, gh_json, run, say
 
 
 def audit_repo(repo: str) -> list[str]:
@@ -48,6 +49,9 @@ def audit_repo(repo: str) -> list[str]:
         or []
     )
     problems += waiting_dependabot(prs, datetime.datetime.now(datetime.UTC))
+
+    issues = gh_json("issue", "list", "--repo", repo, "--state", "open", "--limit", "1000", "--json", "number,title")
+    problems += uncapitalized_issues(issues or [])
 
     labels = {label["name"] for label in gh_json("api", f"repos/{repo}/labels?per_page=100") or []}
     missing_labels = sorted(set(LABELS) - labels)
@@ -113,6 +117,15 @@ def waiting_dependabot(prs: list[dict], now: datetime.datetime) -> list[str]:
         if days > WAITING_DAYS:
             problems.append(f"Dependabot PR #{pr['number']} has waited {days} days: {pr['title']}")
     return problems
+
+
+def uncapitalized_issues(issues: list[dict]) -> list[str]:
+    """Open issues whose title doesn't start with a capital letter."""
+    return [
+        f"issue #{issue['number']}'s title doesn't start with a capital letter: {issue['title']}"
+        for issue in sorted(issues, key=lambda issue: issue["number"])
+        if not capitalized(issue["title"])
+    ]
 
 
 def audit_files(root: Path, description: str | None = None) -> list[str]:
