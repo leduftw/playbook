@@ -12,7 +12,7 @@ import datetime
 import re
 from pathlib import Path
 
-from . import settings
+from . import readme, settings
 from . import topics as repo_topics
 from .config import load
 from .sync import sync_here
@@ -132,7 +132,7 @@ def new(name: str, published: bool, private: bool, stack: str, description: str,
     git("init", "--quiet", "-b", "main", cwd=root)
     scaffold(root, name, stack, published)
 
-    (root / "README.md").write_text(f"# {name}\n\n{sentence(description)}\n", encoding="utf-8")
+    (root / "README.md").write_text(readme.scaffold(name, description, published), encoding="utf-8")
     (root / ".gitignore").write_text("\n".join([".DS_Store", *GITIGNORE[stack]]) + "\n", encoding="utf-8")
     (root / ".gitattributes").write_text("* text=auto\n.githooks/* text eol=lf\n*.sh text eol=lf\n", encoding="utf-8")
     if not private:

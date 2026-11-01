@@ -51,6 +51,10 @@ actionlint
   and commits don't, and GitHub would copy the title. So `finish`, `sync`'s auto-merge
   and the pipeline's Dependabot job all pass `--subject`, and anything new that merges
   a PR must too.
+- **The workflow is called `CI`, but its file stays `playbook.yml`.** The README badge
+  shows the display name, and crates.io and NuGet match trusted publishing against the
+  file name. `gh workflow run` and `workflow_run` triggers go by the display name, so
+  documented commands name the file, and horizon's `Release` trigger lists `CI`.
 - **The installers keep their whole body in `main`, called on the last line.**
   People pipe them into `sh`, and a shell reading a pipe runs each command as it
   arrives, so a dropped connection must not run half the script.
