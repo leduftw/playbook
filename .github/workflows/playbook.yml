@@ -1,6 +1,6 @@
 # Managed by leduftw/playbook v1. Change it there, not here:
 # https://github.com/leduftw/playbook
-name: playbook
+name: CI
 
 on:
   push:
