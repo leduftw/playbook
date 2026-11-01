@@ -220,7 +220,8 @@ def write_version(root: Path, release: Release, version: str) -> list[Path]:
         if module:
             text = module.read_text(encoding="utf-8")
             module.write_text(
-                _PYTHON_VERSION.sub(lambda m: f"{m.group(1)}{version}{m.group(3)}", text), encoding="utf-8"
+                _PYTHON_VERSION.sub(lambda m: f"{m['prefix']}{m['quote']}{version}{m['quote']}", text),
+                encoding="utf-8",
             )
             changed.append(module)
     else:
@@ -233,7 +234,7 @@ def write_version(root: Path, release: Release, version: str) -> list[Path]:
 
 
 _DOTNET_VERSION = re.compile(r"(<Version>)([^<]+)(</Version>)")
-_PYTHON_VERSION = re.compile(r'(?m)^(__version__\s*=\s*")([^"]*)(")')
+_PYTHON_VERSION = re.compile(r"""(?m)^(?P<prefix>__version__\s*=\s*)(?P<quote>['"])(?P<version>[^'"\n]*)(?P=quote)""")
 
 
 def _dotnet_version_file(root: Path, release: Release) -> Path:
@@ -290,7 +291,7 @@ def _read_python_version(root: Path, release: Release) -> str:
     version = _toml_table_value(manifest.read_text(encoding="utf-8"), "project", "version", manifest)
     module = _python_version_module(root, release)
     if module:
-        recorded = _single_match(_PYTHON_VERSION, module.read_text(encoding="utf-8"), module).group(2)
+        recorded = _single_match(_PYTHON_VERSION, module.read_text(encoding="utf-8"), module).group("version")
         if recorded != version:
             raise ConfigError(f"{module} says {recorded}, but {manifest} says {version}")
     return version

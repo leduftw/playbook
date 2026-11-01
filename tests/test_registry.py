@@ -1,3 +1,6 @@
+import gzip
+import io
+import tarfile
 import tempfile
 import unittest
 import xml.etree.ElementTree as ET
@@ -243,7 +246,11 @@ def fake_uv(wheel="leduftw_subtitler-1.0.0-py3-none-any.whl", source="leduftw_su
             (out / ".gitignore").write_text("*")
             for name in (wheel, source):
                 if name:
-                    (out / name).touch()
+                    if name.endswith(".tar.gz"):
+                        with tarfile.open(out / name, "w:gz"):
+                            pass
+                    else:
+                        (out / name).touch()
         return mock.Mock(returncode=0, stdout="", stderr="")
 
     return run
@@ -280,6 +287,52 @@ class PythonDistributionsTest(unittest.TestCase):
     def test_a_package_of_another_version_is_a_failure(self):
         with self.assertRaisesRegex(Failure, "not version 2.0.0"):
             self.build(version="2.0.0")
+
+
+class ReproducibleSourceTest(unittest.TestCase):
+    def archive(self, path: Path, clock: int, owner: int) -> None:
+        with (
+            path.open("wb") as stream,
+            gzip.GzipFile(filename=str(clock), fileobj=stream, mode="wb", mtime=clock) as compressed,
+            tarfile.open(fileobj=compressed, mode="w", format=tarfile.PAX_FORMAT) as archive,
+        ):
+            for name, kind in (
+                ("package", tarfile.DIRTYPE),
+                ("package/tool", tarfile.REGTYPE),
+                ("package/link", tarfile.SYMTYPE),
+            ):
+                member = tarfile.TarInfo(name)
+                member.type = kind
+                member.mtime = clock + 0.5
+                member.uid = member.gid = owner
+                member.uname = member.gname = str(owner)
+                member.pax_headers = {"atime": str(clock), "ctime": str(clock), "uid": str(owner)}
+                member.mode = 0o755
+                if kind == tarfile.SYMTYPE:
+                    member.linkname = "tool"
+                contents = b"#!/bin/sh\necho tool\n" if kind == tarfile.REGTYPE else b""
+                member.size = len(contents)
+                archive.addfile(member, io.BytesIO(contents) if contents else None)
+
+    def test_retries_are_byte_identical_despite_build_times_and_owners(self):
+        with tempfile.TemporaryDirectory() as temp:
+            one, two = Path(temp) / "one.tar.gz", Path(temp) / "two.tar.gz"
+            self.archive(one, 1_700_000_100, 501)
+            self.archive(two, 1_700_000_200, 1001)
+            self.assertNotEqual(one.read_bytes(), two.read_bytes())
+            for path in (one, two):
+                registry._reproducible_source(path, 1_700_000_000)
+            self.assertEqual(one.read_bytes(), two.read_bytes())
+            with tarfile.open(one, "r:gz") as archive:
+                members = archive.getmembers()
+                self.assertEqual([member.name for member in members], ["package", "package/tool", "package/link"])
+                self.assertTrue(members[0].isdir())
+                self.assertTrue(members[1].isfile())
+                self.assertEqual(members[1].mode, 0o755)
+                self.assertEqual(archive.extractfile(members[1]).read(), b"#!/bin/sh\necho tool\n")
+                self.assertTrue(members[2].issym())
+                self.assertEqual(members[2].linkname, "tool")
+                self.assertTrue(all(member.mtime == 1_700_000_000 for member in members))
 
 
 class PythonDryRunTest(unittest.TestCase):
@@ -361,8 +414,11 @@ class PythonPublishTest(unittest.TestCase):
         command = self.publish()
         self.assertEqual(command[command.index("--check-url") + 1], registry.PYPI_INDEX)
 
-    def test_a_file_already_on_pypi_isnt_a_failure(self):
-        self.publish(code=1, stderr="400 Bad Request: File already exists")
+    def test_a_conflicting_existing_file_is_a_failure(self):
+        # Identical files are skipped by uv with exit 0. Suppressing this error
+        # could leave the source archive missing after a conflicting wheel.
+        with self.assertRaisesRegex(Failure, "uv publish failed"):
+            self.publish(code=1, stderr="400 Bad Request: File already exists")
 
     def test_any_other_failure_is(self):
         with self.assertRaisesRegex(Failure, "uv publish failed"):

@@ -17,8 +17,10 @@ program; that's why a wheel needs no build per platform.
 
 from __future__ import annotations
 
+import gzip
 import os
 import sys
+import tarfile
 import tempfile
 import xml.etree.ElementTree as ET
 import zipfile
@@ -78,10 +80,12 @@ def _python_distributions(root: Path, config: Config, version: str, out: Path) -
     """Builds the wheel and the source archive, and checks they're this version's."""
     release = config.release
     assert release is not None
-    # The commit's date, so a retried upload is the same file, which PyPI accepts.
+    timestamp = build.source_date(root)
+    # Wheels respect this date; setuptools' source archives still need their
+    # gzip and tar metadata normalized below before identical retries are safe.
     run(
         ["uv", "build", "--out-dir", str(out), str(root / release.dir)],
-        env={"SOURCE_DATE_EPOCH": str(build.source_date(root))},
+        env={"SOURCE_DATE_EPOCH": str(timestamp)},
     )
     wheels, sources = sorted(out.glob("*.whl")), sorted(out.glob("*.tar.gz"))
     if len(wheels) != 1 or len(sources) != 1:
@@ -89,7 +93,33 @@ def _python_distributions(root: Path, config: Config, version: str, out: Path) -
     wheel, source = wheels[0], sources[0]
     if f"-{version}-" not in wheel.name or not source.name.endswith(f"-{version}.tar.gz"):
         raise Failure(f"uv build made {wheel.name} and {source.name}, not version {version}")
+    _reproducible_source(source, timestamp)
     return wheel, source
+
+
+def _reproducible_source(source: Path, timestamp: int) -> None:
+    """Remove build-machine ownership and clocks without changing source files."""
+    with tempfile.TemporaryDirectory(dir=source.parent, prefix="playbook-source-") as temp:
+        normalized = Path(temp) / source.name
+        with (
+            tarfile.open(source, "r:gz") as original,
+            normalized.open("wb") as stream,
+            gzip.GzipFile(filename="", fileobj=stream, mode="wb", mtime=timestamp) as compressed,
+            tarfile.open(fileobj=compressed, mode="w", format=tarfile.PAX_FORMAT) as archive,
+        ):
+            for member in original:
+                member.mtime = timestamp
+                member.uid = member.gid = 0
+                member.uname = member.gname = ""
+                # PAX values take precedence over the ordinary tar header.
+                for key in ("mtime", "atime", "ctime", "uid", "gid", "uname", "gname"):
+                    member.pax_headers.pop(key, None)
+                if member.isfile():
+                    with original.extractfile(member) as contents:
+                        archive.addfile(member, contents)
+                else:
+                    archive.addfile(member)
+        normalized.replace(source)
 
 
 def _check_python_tool(config: Config, version: str, wheel: Path, work: Path) -> None:
@@ -343,9 +373,8 @@ def publish(root: Path, config: Config) -> None:
             )
         print(result.stdout, result.stderr, sep="\n")
         if result.returncode != 0:
-            if "already exists" in result.stdout + result.stderr:
-                say(f"PyPI already has {config.name} {version}")
-                return
+            # uv's index check already accepts identical files. A rejected
+            # existing filename can mean different contents or a partial upload.
             raise Failure("uv publish failed")
         say(f"published {wheel.name} and {source.name} to PyPI")
     else:

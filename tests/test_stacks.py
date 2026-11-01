@@ -114,6 +114,21 @@ class PythonVersionTest(unittest.TestCase):
         self.assertIn("says 9.9.9", str(caught.exception))
         self.assertIn("says 1.2.3", str(caught.exception))
 
+    def test_a_single_quoted_runtime_version_is_also_checked(self):
+        self.package("__version__ = '9.9.9'")
+        with self.assertRaises(ConfigError) as caught:
+            stacks.read_version(self.root, self.release)
+        self.assertIn("says 9.9.9", str(caught.exception))
+        self.assertIn("says 1.2.3", str(caught.exception))
+
+    def test_a_release_preserves_a_single_quoted_runtime_version(self):
+        module = self.package("__version__ = '1.2.3'  # The command's version.")
+        self.assertEqual(stacks.version_files(self.root, self.release), [self.pyproject, module])
+        changed = stacks.write_version(self.root, self.release, "1.2.4")
+        self.assertEqual(changed, [self.pyproject, module])
+        self.assertIn("__version__ = '1.2.4'  # The command's version.", module.read_text())
+        self.assertEqual(stacks.read_version(self.root, self.release), "1.2.4")
+
     def test_a_computed_version_is_left_alone(self):
         module = self.package('__version__ = importlib.metadata.version("x")')
         self.assertEqual(stacks.version_files(self.root, self.release), [self.pyproject])
