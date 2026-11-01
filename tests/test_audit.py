@@ -1,7 +1,7 @@
 import datetime
 import unittest
 
-from playbook.audit import waiting_dependabot
+from playbook.audit import uncapitalized_issues, waiting_dependabot
 
 NOW = datetime.datetime(2026, 10, 14, 12, tzinfo=datetime.UTC)
 
@@ -23,6 +23,25 @@ class WaitingDependabotTest(unittest.TestCase):
 
     def test_nothing_waiting(self):
         self.assertEqual(waiting_dependabot([], NOW), [])
+
+
+class UncapitalizedIssuesTest(unittest.TestCase):
+    def test_reports_only_titles_that_start_with_a_lowercase_letter(self):
+        issues = [
+            {"number": 302, "title": "decide on the clippy lints"},
+            {"number": 157, "title": "RSU vesting schedule"},
+            {"number": 76, "title": "touch ID enrollment fails"},
+        ]
+        self.assertEqual(
+            uncapitalized_issues(issues),
+            [
+                "issue #76's title doesn't start with a capital letter: touch ID enrollment fails",
+                "issue #302's title doesn't start with a capital letter: decide on the clippy lints",
+            ],
+        )
+
+    def test_nothing_to_report(self):
+        self.assertEqual(uncapitalized_issues([]), [])
 
 
 if __name__ == "__main__":

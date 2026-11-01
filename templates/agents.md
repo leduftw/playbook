@@ -7,7 +7,7 @@ The facts about this repo live in `.github/playbook.toml`. Everything in this se
 
 ### Every change
 
-1. **Start from an issue.** Reuse the issue that describes the change, or create one assigned to `leduftw` with at least one label.
+1. **Start from an issue.** Reuse the issue that describes the change, or create one assigned to `leduftw` with at least one label. Its title starts with a capital letter, or `playbook start` refuses it.
 2. **Work in your own worktree.** Run `playbook start <issue>`: it creates `~/Developer/.worktrees/@@name@@/<issue>-<slug>` on branch `dev/leduftw/<issue>-<slug>`, based on the latest `main`. Work only there. Another session may be working at the same time, so never edit the primary checkout; it stays on `main` and only moves with `git pull`.
 3. **Commit and push** each finished slice to that branch, without pausing for confirmation.
 4. **Open the PR** with `gh pr create --base main`. Its title follows the PR title style below. Put `Closes #<issue>` in the body when the PR fully resolves the issue.

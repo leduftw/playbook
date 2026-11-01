@@ -88,6 +88,12 @@ def commit_subject(title: str, number: int | str) -> str:
     return f"{title[:1].lower()}{title[1:]} (#{number})"
 
 
+def capitalized(title: str) -> bool:
+    """Whether an issue's title keeps the rule. Only a lowercase letter breaks it:
+    unlike a PR, an issue needn't open with a verb, so `2FA codes expire` is fine."""
+    return not title[:1].islower()
+
+
 def repository(root: Path | str = ".") -> str:
     """owner/name of the repo: from GitHub Actions, else from the origin remote."""
     if os.environ.get("GITHUB_REPOSITORY"):

@@ -7,8 +7,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from playbook.util import commit_subject, pr_title
-from playbook.worktree import checkout_of, cleanup, finish, remove_empty_folders, slugify
+from playbook.util import Failure, capitalized, commit_subject, pr_title
+from playbook.worktree import checkout_of, cleanup, finish, remove_empty_folders, slugify, start
 
 ENV = {
     **os.environ,
@@ -78,6 +78,54 @@ class CommitSubjectTest(unittest.TestCase):
     def test_a_pr_title_is_its_commit_with_a_capital(self):
         self.assertEqual(pr_title("release 1.4.0"), "Release 1.4.0")
         self.assertEqual(pr_title("fix Windows installer"), "Fix Windows installer")
+
+
+class CapitalizedTest(unittest.TestCase):
+    def test_only_a_lowercase_letter_breaks_the_rule(self):
+        self.assertTrue(capitalized("Fix the installer"))
+        self.assertTrue(capitalized("2FA codes expire"))
+        self.assertTrue(capitalized("`playbook audit` misses a repo"))
+        self.assertFalse(capitalized("fix the installer"))
+
+
+class StartTest(unittest.TestCase):
+    def start(self, title, worktrees):
+        issue = {"title": title, "state": "OPEN", "url": "https://github.com/o/r/issues/12"}
+        with (
+            mock.patch("playbook.worktree.primary_checkout", return_value=Path(".")),
+            mock.patch("playbook.worktree.repo_name", return_value="r"),
+            mock.patch("playbook.worktree.ensure_hooks"),
+            mock.patch("playbook.worktree.github_user", return_value="test"),
+            mock.patch("playbook.worktree.WORKTREES", worktrees),
+            mock.patch("playbook.worktree.gh_json", return_value=issue),
+            mock.patch("playbook.worktree.run", return_value=subprocess.CompletedProcess([], 1)),
+            mock.patch("playbook.worktree.git") as git,
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            return start(12), git
+
+    def test_a_title_without_a_capital_stops_before_anything_is_created(self):
+        with tempfile.TemporaryDirectory() as temp:
+            with self.assertRaises(Failure) as caught:
+                self.start("fix the installer", Path(temp))
+            self.assertIn("issue #12's title must start with a capital letter", str(caught.exception))
+            self.assertIn("gh issue edit 12", str(caught.exception))
+            self.assertEqual(list(Path(temp).iterdir()), [])
+
+    def test_a_capitalized_title_gets_its_worktree(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path, git = self.start("Fix the installer", Path(temp))
+            self.assertEqual(path, Path(temp) / "r" / "12-fix-the-installer")
+            git.assert_called_with(
+                "worktree",
+                "add",
+                "--no-track",
+                "-b",
+                "dev/test/12-fix-the-installer",
+                str(path),
+                "origin/main",
+                cwd=Path("."),
+            )
 
 
 class FinishTest(unittest.TestCase):
