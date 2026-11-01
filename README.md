@@ -160,7 +160,7 @@ its `Cellar`.
 | Installed with | Recognized by | `update` runs |
 | --- | --- | --- |
 | Homebrew | `/Cellar/<name>/` in the path | `brew upgrade leduftw/tap/<name>` |
-| WinGet | a folder named `leduftw.<name>_Microsoft.Winget.Source_8wekyb3d8bbwe` in the path, which WinGet uses wherever it installs | `winget upgrade --id leduftw.<name>` |
+| WinGet | a folder named `leduftw.<name>_Microsoft.Winget.Source_8wekyb3d8bbwe` in the path, which WinGet uses for one user, for the whole machine and under a root set in its settings | `winget upgrade --id leduftw.<name>` |
 | crates.io | Cargo's `bin` folder | `cargo install <name> --locked` |
 | NuGet | `.store/<package id>/` in the path | `dotnet tool update --tool-path <folder> <package id>`, for the folder holding that `.store` |
 | PyPI, with uv | `uv-receipt.toml` in the Python environment running it | `uv tool upgrade <package>` |
@@ -168,6 +168,9 @@ its `Cellar`.
 | PyPI, with pip | `site-packages` in the path | `python -m pip install --upgrade <package>`, with the same Python |
 | A local build | `target/` or `bin/Debug` in the path, or Python code that isn't installed | nothing: it refuses |
 | The one-line installer | anywhere else | the release's installer, into the same folder |
+
+`winget install --location` and `--manifest` don't use WinGet's folder, so those
+installs count as the one-line installer's.
 
 If it's already the latest version, `update` says so and exits 0. A release
 reaches WinGet only after Microsoft reviews it, which can take days, and NuGet
