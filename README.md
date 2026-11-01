@@ -20,10 +20,14 @@ repo what a release contains). Everything else comes from this repo.
 - **`playbook finish` lands it:** waits for the checks, merges `main` in if it
   moved, squash-merges, deletes the worktree and branch, pulls `main`, and
   confirms the issue closed.
-- **Squash is the only merge method.** The PR title becomes the commit on
-  `main`, written in one style: a lowercase verb first, plain words, no
-  `feat:`-style prefix, no full stop (`fix Windows installer replacement`).
-  The `playbook / title` check enforces it.
+- **Squash is the only merge method.** Each PR lands on `main` as one commit,
+  written in one style: a lowercase verb first, plain words, no `feat:`-style
+  prefix, no full stop (`fix Windows installer replacement (#12)`).
+- **PR titles start with a capital:** the same words as the commit, with a
+  capital first letter (`Fix Windows installer replacement`). The
+  `playbook / title` check enforces it. A title doesn't become the commit:
+  `playbook finish` and the automatic merges set the commit's subject
+  themselves, so PRs don't land through GitHub's merge button.
 - **The same checks everywhere:** formatting, lint with warnings as errors, and
   tests. Published repos run them on macOS, Linux and Windows; local repos on
   Linux unless their code depends on the OS. A step can only be skipped with a

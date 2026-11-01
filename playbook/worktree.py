@@ -15,7 +15,7 @@ import unicodedata
 from pathlib import Path
 
 from .config import ConfigError, load
-from .util import Failure, gh, gh_json, git, repository, run, say, warn
+from .util import Failure, commit_subject, gh, gh_json, git, repository, run, say, warn
 
 WORKTREES = Path(os.environ.get("PLAYBOOK_WORKTREES", Path.home() / "Developer" / ".worktrees"))
 
@@ -202,8 +202,10 @@ def finish(pr: str | None = None) -> None:
             catch_up(checkout)
 
         wait_for_checks(url)
+        # Read the title again: it may have been fixed while the checks ran.
+        subject = commit_subject(_pr(cwd, url)["title"], data["number"])
         for attempt in range(1, 6):
-            merged = run(["gh", "pr", "merge", url, "--squash"], check=False, capture=True)
+            merged = run(["gh", "pr", "merge", url, "--squash", "--subject", subject], check=False, capture=True)
             if merged.returncode == 0:
                 break
             if attempt == 5:

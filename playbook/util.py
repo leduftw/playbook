@@ -73,6 +73,16 @@ def gh_json(*args: str, cwd: Path | str | None = None) -> Any:
     return json.loads(text) if text else None
 
 
+def pr_title(commit: str) -> str:
+    """A PR's title: the subject of its commit with a capital first letter."""
+    return commit[:1].upper() + commit[1:]
+
+
+def commit_subject(title: str, number: int | str) -> str:
+    """The squash commit a PR lands as: its title with a lowercase first letter, and its number."""
+    return f"{title[:1].lower()}{title[1:]} (#{number})"
+
+
 def repository(root: Path | str = ".") -> str:
     """owner/name of the repo: from GitHub Actions, else from the origin remote."""
     if os.environ.get("GITHUB_REPOSITORY"):

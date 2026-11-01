@@ -446,9 +446,17 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.html_url }}
+          NUMBER: ${{ github.event.pull_request.number }}
+          TITLE: ${{ github.event.pull_request.title }}
         run: |
+          # The commit keeps the commit style, whatever the title looks like now:
+          # the title check may not have fixed it yet.
+          prefix='^[a-zA-Z]+(\([^)]*\))?!?: '
+          subject="$TITLE"
+          [[ "$subject" =~ $prefix ]] && subject="${subject#"${BASH_REMATCH[0]}"}"
+          subject="$(printf '%s' "${subject:0:1}" | tr '[:upper:]' '[:lower:]')${subject:1} (#$NUMBER)"
           # The checks have passed. If GitHub still waits for something else,
           # such as the title check, auto-merge finishes once it's done.
-          if ! gh pr merge --squash "$PR"; then
-            gh pr merge --auto --squash "$PR" || echo "::warning::couldn't merge or turn on auto-merge; land it with playbook finish"
+          if ! gh pr merge --squash --subject "$subject" "$PR"; then
+            gh pr merge --auto --squash --subject "$subject" "$PR" || echo "::warning::couldn't merge or turn on auto-merge; land it with playbook finish"
           fi

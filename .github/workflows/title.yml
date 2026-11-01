@@ -1,6 +1,7 @@
-# Checks that a PR title follows the commit style, since the title becomes the
-# squash commit on main: a lowercase verb first, plain words, no "type:" prefix
-# and no full stop. Dependabot's titles are fixed in place ("npm(deps): Bump x" becomes "bump x").
+# Checks that a PR title starts with a capital letter, then plain words, with no
+# "type:" prefix and no full stop. A title doesn't become the commit: whatever
+# merges the PR gives the squash commit a lowercase first letter. Dependabot's
+# titles are fixed in place ("npm(deps): bump x" becomes "Bump x").
 name: title
 
 on:
@@ -28,20 +29,20 @@ jobs:
           if [[ "$AUTHOR" == "dependabot[bot]" ]]; then
             fixed="$TITLE"
             [[ "$fixed" =~ $prefix ]] && fixed="${fixed#"${BASH_REMATCH[0]}"}"
-            fixed="$(printf '%s' "${fixed:0:1}" | tr '[:upper:]' '[:lower:]')${fixed:1}"
+            fixed="$(printf '%s' "${fixed:0:1}" | tr '[:lower:]' '[:upper:]')${fixed:1}"
             if [[ "$fixed" != "$TITLE" ]]; then
               gh pr edit "$PR" --title "$fixed"
               TITLE="$fixed"
             fi
           fi
           problems=()
-          [[ "$TITLE" =~ ^[a-z] ]] || problems+=("start with a lowercase verb, such as add, fix or remove")
+          [[ "$TITLE" =~ ^[A-Z] ]] || problems+=("start with a capital letter, such as Add, Fix or Remove")
           [[ "$TITLE" =~ \.$ ]] && problems+=("drop the full stop at the end")
           [[ "$TITLE" =~ $prefix ]] && problems+=("drop the \"type:\" prefix")
           if ((${#problems[@]})); then
-            echo "::error title=PR title::\"$TITLE\" doesn't follow the commit style"
+            echo "::error title=PR title::\"$TITLE\" doesn't follow the PR title style"
             printf -- '- %s\n' "${problems[@]}"
-            echo "For example: fix Windows installer replacement"
+            echo "For example: Fix Windows installer replacement"
             exit 1
           fi
-          echo "\"$TITLE\" follows the commit style"
+          echo "\"$TITLE\" follows the PR title style"
