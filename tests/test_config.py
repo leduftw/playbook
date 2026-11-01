@@ -2,7 +2,7 @@ import tomllib
 import unittest
 
 from playbook.config import TARGETS, ConfigError, parse
-from tests.fixtures import DBIRD, LOCAL, MONAD, config
+from tests.fixtures import DBIRD, LOCAL, MONAD, SUBTITLER, config
 
 
 class ValidConfigTest(unittest.TestCase):
@@ -21,6 +21,13 @@ class ValidConfigTest(unittest.TestCase):
         self.assertEqual(monad.release.macos_binaries, ["monad-audiotap"])
         self.assertEqual(monad.release.version_output, "monad {version}")
         self.assertEqual(monad.release.smoke["macos"], ["{dir}/monad-audiotap help"])
+
+    def test_python_release_publishes_to_pypi(self):
+        subtitler = config(SUBTITLER)
+        self.assertEqual(subtitler.release.stack, "python")
+        self.assertEqual(subtitler.release.registry, "pypi")
+        self.assertEqual(subtitler.release.homebrew.macos_dependencies, ["ffmpeg"])
+        self.assertEqual(subtitler.release.homebrew.linux_dependencies, ["ffmpeg"])
 
     def test_local_repo_checks_only_on_linux(self):
         local = config(LOCAL)
@@ -58,6 +65,20 @@ class InvalidConfigTest(unittest.TestCase):
             'name = "x"\npublished = true\n[[check]]\nstack = "rust"\n[release]\nstack = "rust"\nchannels = ["nuget"]'
         )
         self.assertInvalid(text, "nuget can't publish a rust project")
+
+    def test_pypi_is_for_python(self):
+        text = 'name = "x"\npublished = true\n[[check]]\nstack = "rust"\n[release]\nstack = "rust"\nchannels = ["pypi"]'
+        self.assertInvalid(text, "pypi can't publish a rust project")
+
+    def test_a_python_release_takes_its_package_name_from_pyproject(self):
+        text = (
+            'name = "x"\npublished = true\n[[check]]\nstack = "python"\n[release]\nstack = "python"\npackage-id = "y"'
+        )
+        self.assertInvalid(text, "pyproject.toml names the package")
+
+    def test_only_some_stacks_can_be_released(self):
+        text = 'name = "x"\npublished = true\n[[check]]\nstack = "node"\n[release]\nstack = "node"'
+        self.assertInvalid(text, "release.stack must be one of rust, dotnet, python")
 
     def test_homebrew_needs_a_description(self):
         text = (

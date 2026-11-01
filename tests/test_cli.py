@@ -95,7 +95,7 @@ class MistakeTest(unittest.TestCase):
             [*base, "--local", "--description", "a tool."],
             [*base, "--local", "--topics", "Uppercase"],
             [*base, "--published", "--topics", "rust", "--private"],
-            [*base, "--published", "--topics", "python", "--stack", "python"],
+            [*base, "--published", "--topics", "node", "--stack", "node"],
             ["new", "Bad-Name", "--local", "--stack", "rust", "--description", "a tool"],
         ]
         with mock.patch("playbook.new.gh", side_effect=AssertionError("invalid input must not reach GitHub")):

@@ -17,6 +17,7 @@ from typing import Any
 CONFIG_PATH = Path(".github") / "playbook.toml"
 
 STACKS = ("rust", "dotnet", "python", "node")
+RELEASE_STACKS = ("rust", "dotnet", "python")
 OSES = ("linux", "macos", "windows")
 STEPS = ("format", "lint", "test")
 TARGETS = (
@@ -63,6 +64,7 @@ class Check:
 @dataclass
 class Homebrew:
     desc: str = ""
+    macos_dependencies: list[str] = field(default_factory=list)
     linux_dependencies: list[str] = field(default_factory=list)
     install: list[str] = field(default_factory=list)
 
@@ -185,7 +187,7 @@ def _check(table: _Table) -> Check:
 
 def _release(table: _Table, name: str) -> Release:
     release = Release(
-        stack=table.choice("stack", ("rust", "dotnet")),
+        stack=table.choice("stack", RELEASE_STACKS),
         dir=table.text("dir", "."),
         project=table.text_or_none("project"),
         binaries=table.texts("binaries") or [name],
@@ -214,6 +216,7 @@ def _release(table: _Table, name: str) -> Release:
     homebrew = _Table(table.table("homebrew") or {}, "release.homebrew")
     release.homebrew = Homebrew(
         desc=homebrew.text("desc", ""),
+        macos_dependencies=homebrew.texts("macos-dependencies"),
         linux_dependencies=homebrew.texts("linux-dependencies"),
         install=homebrew.texts("install"),
     )
@@ -235,6 +238,8 @@ def _release(table: _Table, name: str) -> Release:
 
     if release.stack == "dotnet" and not release.project:
         raise ConfigError("release.project is required for a dotnet release")
+    if release.stack == "python" and release.package_id:
+        raise ConfigError("release.package-id doesn't apply to a python release; pyproject.toml names the package")
     registry = release.registry
     if registry and REGISTRIES[registry] != release.stack:
         raise ConfigError(f"{registry} can't publish a {release.stack} project")

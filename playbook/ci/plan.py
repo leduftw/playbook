@@ -90,6 +90,7 @@ def build_matrix(root: Path, config: Config) -> list[dict[str, object]]:
                 "dotnet_rid": info["dotnet"],
                 "apt": " ".join(release.apt),
                 "global_json": _find(root, release.dir, "global.json"),
+                "python_version_file": _find(root, release.dir, ".python-version"),
             }
         )
     return entries

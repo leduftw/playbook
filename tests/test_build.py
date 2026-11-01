@@ -2,9 +2,13 @@ import os
 import sys
 import tempfile
 import unittest
+import urllib.error
+from collections import namedtuple
 from pathlib import Path
 from unittest import mock
 
+from playbook import stacks
+from playbook.ci import build
 from playbook.ci.build import (
     EXECUTABLE,
     REGULAR,
@@ -15,8 +19,9 @@ from playbook.ci.build import (
     smoke,
     write_archive,
 )
+from playbook.config import ConfigError
 from playbook.util import Failure
-from tests.fixtures import DBIRD, MONAD, config
+from tests.fixtures import DBIRD, MONAD, PYPROJECT, SUBTITLER, config
 from tests.test_command_line import TOOL
 
 
@@ -115,6 +120,153 @@ class ExpectedFilesTest(unittest.TestCase):
 
     def test_rust_archives_hold_binary_licence_and_readme(self):
         self.assertEqual(expected_files(config(DBIRD).release, "linux-x64"), ["LICENSE", "README.md", "dbird"])
+
+    def test_python_archives_also_hold_the_licence_of_the_python_inside(self):
+        subtitler = config(SUBTITLER).release
+        self.assertEqual(
+            expected_files(subtitler, "windows-arm64"),
+            ["LICENSE", "PYTHON-LICENSE.txt", "PYTHON-THIRD-PARTY-NOTICES.txt", "README.md", "subtitler.exe"],
+        )
+
+
+class BuildPythonTest(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name) / "repo"
+        self.root.mkdir()
+        (self.root / "pyproject.toml").write_text(PYPROJECT)
+        self.work = Path(self.temp.name) / "work"
+        self.work.mkdir()
+        self.release = config(SUBTITLER).release
+
+    def build(self):
+        with mock.patch.object(build, "run") as run:
+            built = build._build_python(self.root, self.release, self.work)
+        return built, [call.args[0] for call in run.call_args_list]
+
+    def bundler(self):
+        return self.build()[1][-1]
+
+    def test_the_bundler_is_pinned_and_only_in_a_throwaway_environment(self):
+        _, commands = self.build()
+        self.assertEqual(commands[0], [sys.executable, "-m", "venv", str(self.work / "environment")])
+        install = commands[1]
+        self.assertIn("environment", install[0])
+        self.assertRegex(stacks.PYINSTALLER, r"^pyinstaller==\d+\.\d+\.\d+$")
+        self.assertIn(stacks.PYINSTALLER, install)
+        self.assertIn(str(self.root), install)
+
+    def test_it_makes_one_file_with_the_runtime_hook(self):
+        command = self.bundler()
+        self.assertIn("--onefile", command)
+        self.assertEqual(command[command.index("--name") + 1], "subtitler")
+        hook = Path(command[command.index("--runtime-hook") + 1])
+        self.assertTrue(hook.is_file(), hook)
+
+    def test_it_keeps_what_the_bundler_cant_see(self):
+        command = self.bundler()
+        self.assertEqual(command[command.index("--collect-submodules") + 1], "subtitler")
+        self.assertEqual(command[command.index("--collect-data") + 1], "subtitler")
+
+    def test_the_program_starts_the_scripts_entry_point_and_passes_on_its_exit_code(self):
+        script = Path(self.bundler()[-1])
+        self.assertEqual(script.read_text(), "import sys\n\nimport subtitler.cli\n\nsys.exit(subtitler.cli.main())\n")
+
+    def test_a_missing_entry_point_stops_before_installing_anything(self):
+        (self.root / "pyproject.toml").write_text('[project]\nname = "x"\nversion = "1.0.0"\n')
+        with mock.patch.object(build, "run") as run, self.assertRaises(ConfigError):
+            build._build_python(self.root, self.release, self.work)
+        run.assert_not_called()
+
+    def test_the_licence_comes_from_the_python_in_use(self):
+        notices = build._python_notices()
+        self.assertEqual(list(notices.values()), ["PYTHON-LICENSE.txt"])
+        self.assertIn("PYTHON SOFTWARE FOUNDATION LICENSE", next(iter(notices)).read_text(encoding="utf-8"))
+
+    def test_the_finished_archive_carries_both_python_and_third_party_notices(self):
+        for name in self.release.files:
+            (self.root / name).write_text(name)
+        (self.work / "subtitler").write_text("a built program")
+        licence = self.root / "python-licence"
+        licence.write_text("Python's licence")
+        with (
+            mock.patch.object(build, "_build_python", return_value=self.work),
+            mock.patch.object(build, "_python_notices", return_value={licence: "PYTHON-LICENSE.txt"}),
+            mock.patch.object(build, "_python_third_party_notices", return_value="third-party licences"),
+            mock.patch.object(build, "source_date", return_value=1_700_000_000),
+        ):
+            archive = build.build(self.root, config(SUBTITLER), "linux-x64", "1.2.3", self.work / "archives")
+        payload = self.work / "payload"
+        extract(archive, payload)
+        self.assertEqual(sorted(p.name for p in payload.iterdir()), expected_files(self.release, "linux-x64"))
+        self.assertEqual((payload / "PYTHON-LICENSE.txt").read_text(), "Python's licence")
+        self.assertEqual((payload / "PYTHON-THIRD-PARTY-NOTICES.txt").read_text(), "third-party licences")
+
+
+class PythonThirdPartyNoticesTest(unittest.TestCase):
+    VERSION = namedtuple("Version", "major minor micro releaselevel serial")
+
+    def test_the_build_includes_attributed_notices_for_the_exact_python_and_its_libraries(self):
+        texts = [
+            b"CPython OpenSSL libffi zlib expat libmpdec",
+            b"bzip2 copyright",
+            b"XZ licensing overview",
+            b"0BSD",
+            b"Meta BSD",
+            b"liblzma is in the public domain",
+            b"2016-present, Facebook, Inc.",
+        ]
+        responses = []
+        for text in texts:
+            response = mock.MagicMock()
+            response.__enter__.return_value.read.return_value = text
+            responses.append(response)
+        with (
+            mock.patch.object(build.sys, "version_info", self.VERSION(3, 14, 6, "final", 0)),
+            mock.patch.object(build.urllib.request, "urlopen", side_effect=responses) as fetch,
+        ):
+            notices = build._python_third_party_notices()
+        urls = [call.args[0] for call in fetch.call_args_list]
+        self.assertIn("/python/cpython/v3.14.6/Doc/license.rst", urls[0])
+        for text, url in zip(texts, urls, strict=True):
+            self.assertIn(text.decode(), notices)
+            self.assertIn(f"Source: {url}", notices)
+        self.assertIn("/bzip2-1.0.8/LICENSE", urls[1])
+        self.assertIn("/xz/v5.8.1/COPYING", urls[2])
+        self.assertIn("/xz/v5.8.1/COPYING.0BSD", urls[3])
+        self.assertIn("/zstd/v1.5.7/LICENSE", urls[4])
+        self.assertIn("/xz/v5.2.5/COPYING", urls[5])
+        self.assertIn("/zstd/v1.4.8/LICENSE", urls[6])
+        self.assertIn("Additional project", notices)
+
+    def test_prerelease_python_uses_its_exact_source_tag(self):
+        response = mock.MagicMock()
+        response.__enter__.return_value.read.return_value = b"a licence"
+        with (
+            mock.patch.object(build.sys, "version_info", self.VERSION(3, 15, 0, "candidate", 2)),
+            mock.patch.object(build.urllib.request, "urlopen", return_value=response) as fetch,
+        ):
+            build._python_third_party_notices()
+        self.assertIn("/v3.15.0rc2/Doc/license.rst", fetch.call_args_list[0].args[0])
+
+    def test_a_missing_notice_stops_the_release_with_its_source(self):
+        with (
+            mock.patch.object(build.urllib.request, "urlopen", side_effect=urllib.error.URLError("offline")),
+            self.assertRaisesRegex(
+                Failure, r"couldn't fetch.*https://raw.githubusercontent.com/python/cpython/.*offline"
+            ),
+        ):
+            build._python_third_party_notices()
+
+    def test_an_empty_response_cannot_silently_omit_a_notice(self):
+        response = mock.MagicMock()
+        response.__enter__.return_value.read.return_value = b"\n"
+        with (
+            mock.patch.object(build.urllib.request, "urlopen", return_value=response),
+            self.assertRaisesRegex(Failure, "notice from .* is empty"),
+        ):
+            build._python_third_party_notices()
 
 
 if __name__ == "__main__":

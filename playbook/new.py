@@ -14,7 +14,7 @@ from pathlib import Path
 
 from . import readme, settings
 from . import topics as repo_topics
-from .config import load
+from .config import RELEASE_STACKS, load
 from .sync import sync_here
 from .util import Failure, UsageError, gh, git, run, say, sentence
 
@@ -51,7 +51,7 @@ def config_text(name: str, published: bool, stack: str, description: str) -> str
             'skip.lint = "no linter is set up yet"',
         ]
     if published:
-        registry = {"rust": "crates-io", "dotnet": "nuget"}[stack]
+        registry = {"rust": "crates-io", "dotnet": "nuget", "python": "pypi"}[stack]
         desc = description[0].upper() + description[1:]
         lines += ["", "[release]", f'stack = "{stack}"']
         if stack == "dotnet":
@@ -95,13 +95,28 @@ def scaffold(root: Path, name: str, stack: str, published: bool) -> None:
         (root / "src" / package / "__init__.py").write_text(f'"""{name}."""\n', encoding="utf-8")
         (root / "tests").mkdir()
         (root / "tests" / "__init__.py").write_text("", encoding="utf-8")
+        # The checks run the tests without installing the project, so a test
+        # finds the code in src/ itself.
         (root / "tests" / "test_import.py").write_text(
-            "import unittest\n\n\nclass ImportTest(unittest.TestCase):\n"
+            "import sys\nimport unittest\nfrom pathlib import Path\n\n"
+            'sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))\n\n\n'
+            "class ImportTest(unittest.TestCase):\n"
             f'    def test_imports(self):\n        __import__("{package}")\n',
             encoding="utf-8",
         )
+        scripts = ""
+        if published:
+            # A release builds its program from this entry point.
+            (root / "src" / package / "cli.py").write_text(
+                f'"""{name}\'s command line."""\n\nimport argparse\n\n\n'
+                f'def main() -> int:\n    argparse.ArgumentParser(prog="{name}").parse_args()\n    return 0\n',
+                encoding="utf-8",
+            )
+            scripts = f'[project.scripts]\n{name} = "{package}.cli:main"\n\n'
         (root / "pyproject.toml").write_text(
+            '[build-system]\nrequires = ["setuptools>=77"]\nbuild-backend = "setuptools.build_meta"\n\n'
             f'[project]\nname = "{name}"\nversion = "0.0.0"\nrequires-python = ">=3.11"\n\n'
+            f"{scripts}"
             '[tool.setuptools.packages.find]\nwhere = ["src"]\n',
             encoding="utf-8",
         )
@@ -116,7 +131,7 @@ def new(name: str, published: bool, private: bool, stack: str, description: str,
         raise UsageError("repo names are lowercase letters, digits and hyphens")
     validate_description(description)
     repo_topics.validate(topics)
-    if published and stack not in ("rust", "dotnet"):
+    if published and stack not in RELEASE_STACKS:
         raise UsageError(f"publishing a {stack} project isn't supported yet; it's added the first time one ships")
     if published and private:
         raise UsageError("a published repo must be public, so people can download its releases")
@@ -175,7 +190,7 @@ def new(name: str, published: bool, private: bool, stack: str, description: str,
         binary = name
         todo.append(f"make `{binary} --version` print the version; every release's smoke test runs it")
         todo.append(f"make `{binary} --help` say {sentence(description)!r}; the smoke test checks that too")
-        registry = "crates.io" if stack == "rust" else "NuGet"
+        registry = {"rust": "crates.io", "dotnet": "NuGet", "python": "PyPI"}[stack]
         todo.append(
             f"on {registry}, add a trusted publisher: repository {repo}, workflow playbook.yml, environment release"
         )

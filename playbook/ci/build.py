@@ -16,9 +16,11 @@ import shutil
 import struct
 import subprocess
 import sys
+import sysconfig
 import tarfile
 import tempfile
 import time
+import urllib.request
 import zipfile
 from pathlib import Path
 
@@ -29,6 +31,7 @@ from . import command_line
 
 EXECUTABLE = 0o755
 REGULAR = 0o644
+FROZEN_RUNTIME = Path(__file__).with_name("frozen_runtime.py")
 
 
 def executable_names(release: Release, target: str) -> list[str]:
@@ -42,6 +45,8 @@ def expected_files(release: Release, target: str) -> list[str]:
     files = executable_names(release, target) + [Path(f).name for f in release.files]
     if release.stack == "dotnet":
         files += list(stacks.DOTNET_NOTICES.values())
+    elif release.stack == "python":
+        files += [*stacks.PYTHON_NOTICES.values(), stacks.PYTHON_THIRD_PARTY_NOTICES]
     return sorted(files)
 
 
@@ -60,6 +65,8 @@ def build(root: Path, config: Config, target: str, version: str, out: Path) -> P
         work = Path(temp)
         if release.stack == "rust":
             built = _build_rust(root, release, target)
+        elif release.stack == "python":
+            built = _build_python(root, release, work / "python")
         else:
             built = _build_dotnet(root, release, target, work / "publish")
 
@@ -80,14 +87,18 @@ def build(root: Path, config: Config, target: str, version: str, out: Path) -> P
                 raise Failure(f"{file}, listed in release.files, doesn't exist")
             shutil.copyfile(source, stage / source.name)
             modes[source.name] = REGULAR
-        if release.stack == "dotnet":
-            for source, name in _dotnet_notices().items():
-                shutil.copyfile(source, stage / name)
-                modes[name] = REGULAR
+        notices = {"dotnet": _dotnet_notices, "python": _python_notices}.get(release.stack)
+        for source, name in (notices() if notices else {}).items():
+            shutil.copyfile(source, stage / name)
+            modes[name] = REGULAR
+        if release.stack == "python":
+            name = stacks.PYTHON_THIRD_PARTY_NOTICES
+            (stage / name).write_text(_python_third_party_notices(), encoding="utf-8")
+            modes[name] = REGULAR
 
         out.mkdir(parents=True, exist_ok=True)
         archive = out / stacks.archive_name(config.name, target)
-        write_archive(stage, modes, archive, _source_date(root))
+        write_archive(stage, modes, archive, source_date(root))
     say(f"packaged {archive}")
     return archive
 
@@ -142,6 +153,70 @@ def _build_dotnet(root: Path, release: Release, target: str, publish: Path) -> P
     return publish
 
 
+def _build_python(root: Path, release: Release, work: Path) -> Path:
+    """One standalone program per binary, each holding Python and the project.
+
+    Each is a single file that unpacks itself when it starts, because the
+    archives, the installers, Homebrew and WinGet all expect a single program.
+    The bundler is installed beside the project in a throwaway environment, so
+    it's never a dependency of the project, and it collects whatever that
+    environment holds, so the project's own dependencies come along.
+    """
+    entries = stacks.python_entry_points(root, release)
+    environment = work / "environment"
+    run([sys.executable, "-m", "venv", str(environment)])
+    python = environment / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    run(
+        [
+            str(python),
+            "-m",
+            "pip",
+            "install",
+            "--quiet",
+            "--disable-pip-version-check",
+            stacks.PYINSTALLER,
+            str(root / release.dir),
+        ]
+    )
+    built = work / "dist"
+    for binary, (module, function) in entries.items():
+        script = work / f"start_{binary.replace('-', '_')}.py"
+        script.write_text(f"import sys\n\nimport {module}\n\nsys.exit({module}.{function}())\n", encoding="utf-8")
+        package = module.partition(".")[0]
+        run(
+            [
+                str(python),
+                "-m",
+                "PyInstaller",
+                "--onefile",
+                "--noconfirm",
+                # Packed programs look like malware to antivirus scanners.
+                "--noupx",
+                "--log-level",
+                "WARN",
+                "--name",
+                binary,
+                "--distpath",
+                str(built),
+                "--workpath",
+                str(work / "build" / binary),
+                "--specpath",
+                str(work / "build"),
+                "--runtime-hook",
+                str(FROZEN_RUNTIME),
+                # Imports the bundler can't see, and files that aren't code.
+                "--collect-submodules",
+                package,
+                "--collect-data",
+                package,
+                str(script),
+            ],
+            cwd=work,
+            env=_build_variables(release),
+        )
+    return built
+
+
 def _build_variables(release: Release) -> dict[str, str]:
     """Repository variables named in release.build-variables, for the build to read."""
     available = json.loads(os.environ.get("PLAYBOOK_VARS") or "{}")
@@ -169,6 +244,62 @@ def _dotnet_notices() -> dict[Path, str]:
     raise Failure("the .NET SDK in use doesn't provide LICENSE.txt and ThirdPartyNotices.txt")
 
 
+def _python_notices() -> dict[Path, str]:
+    """The licence of the Python a standalone program carries, from the Python in use."""
+    candidates = [Path(sysconfig.get_path("stdlib")), Path(sys.base_prefix)]
+    for directory in candidates:
+        if all((directory / name).is_file() for name in stacks.PYTHON_NOTICES):
+            return {directory / name: target for name, target in stacks.PYTHON_NOTICES.items()}
+    raise Failure(f"the Python in use doesn't provide its licence (looked in {candidates})")
+
+
+def _python_third_party_notices() -> str:
+    """Notices for CPython and common libraries its standard library may carry.
+
+    CPython's list is explicitly incomplete: supplement the omitted compression
+    libraries. Project dependencies can require additional notices of their own.
+    Fetches are part of the build, so a missing notice stops the release.
+    """
+    version = ".".join(map(str, sys.version_info[:3]))
+    if sys.version_info.releaselevel != "final":
+        version += {"alpha": "a", "beta": "b", "candidate": "rc"}[sys.version_info.releaselevel]
+        version += str(sys.version_info.serial)
+    sources = (
+        (
+            "CPython and incorporated software",
+            f"https://raw.githubusercontent.com/python/cpython/v{version}/Doc/license.rst",
+        ),
+        ("bzip2 / libbzip2", "https://raw.githubusercontent.com/libarchive/bzip2/bzip2-1.0.8/LICENSE"),
+        (
+            "XZ Utils / liblzma licensing overview",
+            "https://raw.githubusercontent.com/tukaani-project/xz/v5.8.1/COPYING",
+        ),
+        ("liblzma (0BSD license)", "https://raw.githubusercontent.com/tukaani-project/xz/v5.8.1/COPYING.0BSD"),
+        ("Zstandard / libzstd", "https://raw.githubusercontent.com/facebook/zstd/v1.5.7/LICENSE"),
+        (
+            "XZ Utils / older public-domain liblzma releases",
+            "https://raw.githubusercontent.com/tukaani-project/xz/v5.2.5/COPYING",
+        ),
+        ("Zstandard / older libzstd releases", "https://raw.githubusercontent.com/facebook/zstd/v1.4.8/LICENSE"),
+    )
+    sections = [
+        f"Notices for CPython {version} and common libraries its standard library may bundle.\n"
+        "The libraries included depend on the build platform. XZ's command-line tools\n"
+        "and scripts are not included by bundling liblzma. Additional project\n"
+        "dependencies can require notices beyond those collected here.\n"
+    ]
+    for title, url in sources:
+        try:
+            with urllib.request.urlopen(url, timeout=60) as response:
+                text = response.read().decode("utf-8")
+        except (OSError, UnicodeError) as error:
+            raise Failure(f"couldn't fetch the Python release's notice from {url}: {error}") from error
+        if not text.strip():
+            raise Failure(f"the Python release's notice from {url} is empty")
+        sections.append(f"{title}\nSource: {url}\n\n{text.rstrip()}\n")
+    return "\n".join(sections)
+
+
 def _seal_macos(stage: Path, names: list[str]) -> None:
     """Ad-hoc sign any binary that isn't signed yet; never re-sign a signed one.
 
@@ -184,7 +315,7 @@ def _seal_macos(stage: Path, names: list[str]) -> None:
             run(["codesign", "--verify", "--strict", str(binary)])
 
 
-def _source_date(root: Path) -> int:
+def source_date(root: Path) -> int:
     """Timestamp for archive entries: the commit's, so rebuilding gives the same bytes."""
     if os.environ.get("SOURCE_DATE_EPOCH"):
         return int(os.environ["SOURCE_DATE_EPOCH"])

@@ -2,9 +2,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from playbook.ci.plan import check_matrix, release_mode
+from playbook.ci.plan import build_matrix, check_matrix, release_mode
 from playbook.util import Failure
-from tests.fixtures import DBIRD, LOCAL, config
+from tests.fixtures import DBIRD, LOCAL, SUBTITLER, config
 
 
 class ReleaseModeTest(unittest.TestCase):
@@ -62,6 +62,23 @@ class CheckMatrixTest(unittest.TestCase):
         (self.root / "tests").mkdir()
         entries = check_matrix(self.root, config(LOCAL))
         self.assertEqual([e["runner"] for e in entries], ["ubuntu-24.04"])
+
+
+class BuildMatrixTest(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+
+    def test_a_python_release_builds_on_all_six_platforms(self):
+        entries = build_matrix(self.root, config(SUBTITLER))
+        self.assertEqual(len(entries), 6)
+        self.assertEqual({e["stack"] for e in entries}, {"python"})
+
+    def test_a_repo_can_pin_the_python_it_bundles(self):
+        self.assertEqual(build_matrix(self.root, config(SUBTITLER))[0]["python_version_file"], "")
+        (self.root / ".python-version").write_text("3.13\n")
+        self.assertEqual(build_matrix(self.root, config(SUBTITLER))[0]["python_version_file"], ".python-version")
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-"""Language registries (crates.io, NuGet): dry runs on release PRs, uploads on release.
+"""Language registries (crates.io, NuGet, PyPI): dry runs on release PRs, uploads on release.
 
 Uploads run from a job in the repo's own playbook.yml (through the registry
 action), because registries match trusted publishing against the workflow file
@@ -9,12 +9,18 @@ On NuGet a tool is whatever `dotnet pack` makes of it: one package, or, for a
 tool built per platform, a small package that names one package per runtime.
 Every package is pushed, the per-platform ones first, so the package people
 install never names one that isn't there yet.
+
+On PyPI a tool is a wheel and a source archive. Only the wheel gets installed,
+so the Python on the machine that installs it runs the tool, not a standalone
+program; that's why a wheel needs no build per platform.
 """
 
 from __future__ import annotations
 
+import gzip
 import os
 import sys
+import tarfile
 import tempfile
 import xml.etree.ElementTree as ET
 import zipfile
@@ -22,11 +28,12 @@ from pathlib import Path, PurePosixPath
 
 from .. import stacks
 from ..config import Config, Release
-from ..util import Failure, git, run, say, set_output, warn
+from ..util import Failure, git, repository, run, say, set_output, warn
 from . import build, winget
 
 NUGET_SOURCE = "https://api.nuget.org/v3/index.json"
 TOOL_SETTINGS = "DotnetToolSettings.xml"
+PYPI_INDEX = "https://pypi.org/simple/"
 
 
 def info(root: Path, config: Config) -> None:
@@ -46,7 +53,7 @@ def channels_dry_run(root: Path, config: Config, version: str) -> None:
     release = config.release
     assert release is not None
     if "winget" in release.channels:
-        winget.check(config)
+        winget.check(config, version, repository(root))
     if "homebrew" in release.channels:
         git("ls-remote", "--exit-code", "https://github.com/leduftw/homebrew-tap", "HEAD")
         say("the Homebrew tap is reachable")
@@ -59,6 +66,71 @@ def channels_dry_run(root: Path, config: Config, version: str) -> None:
             packages = _pack(root, config, version, work / "packages")
             say(f"NuGet would receive {', '.join(p.name for p in packages)}")
             _check_tool(config, version, work / "packages", work)
+    elif release.registry == "pypi":
+        with tempfile.TemporaryDirectory(prefix="playbook-pypi-") as temp:
+            work = Path(temp)
+            wheel, source = _python_distributions(root, config, version, work / "dist")
+            run(["uvx", stacks.TWINE, "check", "--strict", str(wheel), str(source)])
+            run(["uv", "publish", "--dry-run", "--trusted-publishing", "never", str(wheel), str(source)])
+            say(f"PyPI would receive {wheel.name} and {source.name}")
+            _check_python_tool(config, version, wheel, work)
+
+
+def _python_distributions(root: Path, config: Config, version: str, out: Path) -> tuple[Path, Path]:
+    """Builds the wheel and the source archive, and checks they're this version's."""
+    release = config.release
+    assert release is not None
+    timestamp = build.source_date(root)
+    # Wheels respect this date; setuptools' source archives still need their
+    # gzip and tar metadata normalized below before identical retries are safe.
+    run(
+        ["uv", "build", "--out-dir", str(out), str(root / release.dir)],
+        env={"SOURCE_DATE_EPOCH": str(timestamp)},
+    )
+    wheels, sources = sorted(out.glob("*.whl")), sorted(out.glob("*.tar.gz"))
+    if len(wheels) != 1 or len(sources) != 1:
+        raise Failure(f"uv build made {[p.name for p in [*wheels, *sources]]}, not one wheel and one source archive")
+    wheel, source = wheels[0], sources[0]
+    if f"-{version}-" not in wheel.name or not source.name.endswith(f"-{version}.tar.gz"):
+        raise Failure(f"uv build made {wheel.name} and {source.name}, not version {version}")
+    _reproducible_source(source, timestamp)
+    return wheel, source
+
+
+def _reproducible_source(source: Path, timestamp: int) -> None:
+    """Remove build-machine ownership and clocks without changing source files."""
+    with tempfile.TemporaryDirectory(dir=source.parent, prefix="playbook-source-") as temp:
+        normalized = Path(temp) / source.name
+        with (
+            tarfile.open(source, "r:gz") as original,
+            normalized.open("wb") as stream,
+            gzip.GzipFile(filename="", fileobj=stream, mode="wb", mtime=timestamp) as compressed,
+            tarfile.open(fileobj=compressed, mode="w", format=tarfile.PAX_FORMAT) as archive,
+        ):
+            for member in original:
+                member.mtime = timestamp
+                member.uid = member.gid = 0
+                member.uname = member.gname = ""
+                # PAX values take precedence over the ordinary tar header.
+                for key in ("mtime", "atime", "ctime", "uid", "gid", "uname", "gname"):
+                    member.pax_headers.pop(key, None)
+                if member.isfile():
+                    with original.extractfile(member) as contents:
+                        archive.addfile(member, contents)
+                else:
+                    archive.addfile(member)
+        normalized.replace(source)
+
+
+def _check_python_tool(config: Config, version: str, wheel: Path, work: Path) -> None:
+    """Installs the wheel the way people will, and checks what they'd run."""
+    tools = work / "tools"
+    run(["uv", "tool", "install", str(wheel)], env={"UV_TOOL_DIR": str(tools), "UV_TOOL_BIN_DIR": str(work / "bin")})
+    command = work / "bin" / (config.name + (".exe" if os.name == "nt" else ""))
+    if not command.exists():
+        raise Failure(f"installing {wheel.name} gives no `{config.name}` command")
+    say(f"uv tool install {wheel.name} gives `{config.name}`")
+    build.check_main_binary(command, config, version)
 
 
 def _pack(root: Path, config: Config, version: str, out: Path) -> list[Path]:
@@ -280,5 +352,30 @@ def publish(root: Path, config: Config) -> None:
                     ]
                 )
         say(f"published {', '.join(p.name for p in packages)} to NuGet")
+    elif release.registry == "pypi":
+        with tempfile.TemporaryDirectory(prefix="playbook-pypi-") as temp:
+            wheel, source = _python_distributions(root, config, version, Path(temp))
+            # uv gets the upload token from this job's GitHub identity. The index
+            # check skips files a failed run already uploaded, so a retry is safe.
+            result = run(
+                [
+                    "uv",
+                    "publish",
+                    "--trusted-publishing",
+                    "always",
+                    "--check-url",
+                    PYPI_INDEX,
+                    str(wheel),
+                    str(source),
+                ],
+                check=False,
+                capture=True,
+            )
+        print(result.stdout, result.stderr, sep="\n")
+        if result.returncode != 0:
+            # uv's index check already accepts identical files. A rejected
+            # existing filename can mean different contents or a partial upload.
+            raise Failure("uv publish failed")
+        say(f"published {wheel.name} and {source.name} to PyPI")
     else:
         raise Failure(f"publishing to {release.registry} isn't supported yet")

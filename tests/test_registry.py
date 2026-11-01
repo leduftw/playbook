@@ -1,3 +1,6 @@
+import gzip
+import io
+import tarfile
 import tempfile
 import unittest
 import xml.etree.ElementTree as ET
@@ -8,7 +11,7 @@ from unittest import mock
 from playbook.ci import registry
 from playbook.ci.registry import tool_packages
 from playbook.util import Failure
-from tests.fixtures import MONAD, config
+from tests.fixtures import MONAD, SUBTITLER, config
 
 # DotnetToolSettings.xml as `dotnet pack` writes it, byte order mark included.
 POINTER = """﻿<?xml version="1.0" encoding="utf-8"?>
@@ -231,6 +234,203 @@ class ToolInstallTest(unittest.TestCase):
             )
             self.assertEqual(install.call_args.kwargs["env"]["NUGET_PACKAGES"], str(work / "nuget"))
             check.assert_called_once_with(command, cfg, "2.2.0")
+
+
+def fake_uv(wheel="leduftw_subtitler-1.0.0-py3-none-any.whl", source="leduftw_subtitler-1.0.0.tar.gz"):
+    """Stands in for `run`: `uv build` leaves these files; anything else does nothing."""
+
+    def run(command, **_):
+        if command[:2] == ["uv", "build"]:
+            out = Path(command[command.index("--out-dir") + 1])
+            out.mkdir(parents=True, exist_ok=True)
+            (out / ".gitignore").write_text("*")
+            for name in (wheel, source):
+                if name:
+                    if name.endswith(".tar.gz"):
+                        with tarfile.open(out / name, "w:gz"):
+                            pass
+                    else:
+                        (out / name).touch()
+        return mock.Mock(returncode=0, stdout="", stderr="")
+
+    return run
+
+
+class PythonDistributionsTest(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.work = Path(self.temp.name)
+        self.config = config(SUBTITLER)
+
+    def build(self, version="1.0.0", **names):
+        with (
+            mock.patch.object(registry, "run", side_effect=fake_uv(**names)) as run,
+            mock.patch.object(registry.build, "source_date", return_value=1_700_000_000),
+        ):
+            result = registry._python_distributions(self.work, self.config, version, self.work / "dist")
+        return result, run
+
+    def test_finds_the_wheel_and_the_source_archive(self):
+        (wheel, source), _ = self.build()
+        self.assertEqual(wheel.suffix, ".whl")
+        self.assertTrue(source.name.endswith(".tar.gz"))
+
+    def test_retries_build_the_same_timestamps(self):
+        _, run = self.build()
+        self.assertEqual(run.call_args.kwargs["env"], {"SOURCE_DATE_EPOCH": "1700000000"})
+
+    def test_a_missing_file_is_a_failure(self):
+        with self.assertRaisesRegex(Failure, "not one wheel and one source archive"):
+            self.build(source=None)
+
+    def test_a_package_of_another_version_is_a_failure(self):
+        with self.assertRaisesRegex(Failure, "not version 2.0.0"):
+            self.build(version="2.0.0")
+
+
+class ReproducibleSourceTest(unittest.TestCase):
+    def archive(self, path: Path, clock: int, owner: int) -> None:
+        with (
+            path.open("wb") as stream,
+            gzip.GzipFile(filename=str(clock), fileobj=stream, mode="wb", mtime=clock) as compressed,
+            tarfile.open(fileobj=compressed, mode="w", format=tarfile.PAX_FORMAT) as archive,
+        ):
+            for name, kind in (
+                ("package", tarfile.DIRTYPE),
+                ("package/tool", tarfile.REGTYPE),
+                ("package/link", tarfile.SYMTYPE),
+            ):
+                member = tarfile.TarInfo(name)
+                member.type = kind
+                member.mtime = clock + 0.5
+                member.uid = member.gid = owner
+                member.uname = member.gname = str(owner)
+                member.pax_headers = {"atime": str(clock), "ctime": str(clock), "uid": str(owner)}
+                member.mode = 0o755
+                if kind == tarfile.SYMTYPE:
+                    member.linkname = "tool"
+                contents = b"#!/bin/sh\necho tool\n" if kind == tarfile.REGTYPE else b""
+                member.size = len(contents)
+                archive.addfile(member, io.BytesIO(contents) if contents else None)
+
+    def test_retries_are_byte_identical_despite_build_times_and_owners(self):
+        with tempfile.TemporaryDirectory() as temp:
+            one, two = Path(temp) / "one.tar.gz", Path(temp) / "two.tar.gz"
+            self.archive(one, 1_700_000_100, 501)
+            self.archive(two, 1_700_000_200, 1001)
+            self.assertNotEqual(one.read_bytes(), two.read_bytes())
+            for path in (one, two):
+                registry._reproducible_source(path, 1_700_000_000)
+            self.assertEqual(one.read_bytes(), two.read_bytes())
+            with tarfile.open(one, "r:gz") as archive:
+                members = archive.getmembers()
+                self.assertEqual([member.name for member in members], ["package", "package/tool", "package/link"])
+                self.assertTrue(members[0].isdir())
+                self.assertTrue(members[1].isfile())
+                self.assertEqual(members[1].mode, 0o755)
+                self.assertEqual(archive.extractfile(members[1]).read(), b"#!/bin/sh\necho tool\n")
+                self.assertTrue(members[2].issym())
+                self.assertEqual(members[2].linkname, "tool")
+                self.assertTrue(all(member.mtime == 1_700_000_000 for member in members))
+
+
+class PythonDryRunTest(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.config = config(SUBTITLER)
+        self.config.release.channels = ["pypi"]
+
+    def dry_run(self):
+        def run(command, **kwargs):
+            if command[:3] == ["uv", "tool", "install"]:
+                folder = Path(kwargs["env"]["UV_TOOL_BIN_DIR"])
+                folder.mkdir()
+                (folder / ("subtitler.exe" if registry.os.name == "nt" else "subtitler")).touch()
+            return fake_uv()(command, **kwargs)
+
+        with (
+            mock.patch.object(registry, "run", side_effect=run) as commands,
+            mock.patch.object(registry, "repository", return_value="leduftw/subtitler"),
+            mock.patch.object(registry.build, "source_date", return_value=1),
+            mock.patch.object(registry.build, "check_main_binary") as check,
+        ):
+            registry.channels_dry_run(self.root, self.config, "1.0.0")
+        return [call.args[0] for call in commands.call_args_list], check
+
+    def test_it_checks_the_files_without_any_credentials(self):
+        commands, _ = self.dry_run()
+        self.assertIn(["uvx", registry.stacks.TWINE, "check", "--strict"], [c[:4] for c in commands])
+        publish = next(c for c in commands if c[:2] == ["uv", "publish"])
+        self.assertIn("--dry-run", publish)
+        self.assertEqual(publish[publish.index("--trusted-publishing") + 1], "never")
+
+    def test_it_holds_the_installed_command_to_the_same_rules(self):
+        _, check = self.dry_run()
+        command, cfg, version = check.call_args.args
+        self.assertEqual(command.stem, "subtitler")
+        self.assertEqual((cfg, version), (self.config, "1.0.0"))
+
+    def test_a_wheel_without_the_command_is_a_failure(self):
+        with (
+            mock.patch.object(registry, "run", side_effect=fake_uv()),
+            self.assertRaisesRegex(Failure, "gives no `subtitler` command"),
+        ):
+            registry._check_python_tool(self.config, "1.0.0", Path("x.whl"), self.root)
+
+
+class PythonPublishTest(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        (self.root / "pyproject.toml").write_text(
+            '[project]\nname = "leduftw-subtitler"\nversion = "1.0.0"\n\n'
+            '[project.scripts]\nsubtitler = "subtitler.cli:main"\n'
+        )
+        self.config = config(SUBTITLER)
+
+    def publish(self, code=0, stderr=""):
+        def run(command, **kwargs):
+            if command[:2] == ["uv", "publish"]:
+                return mock.Mock(returncode=code, stdout="", stderr=stderr)
+            return fake_uv()(command, **kwargs)
+
+        with (
+            mock.patch.object(registry, "run", side_effect=run) as commands,
+            mock.patch.object(registry.build, "source_date", return_value=1),
+            mock.patch("builtins.print"),
+        ):
+            registry.publish(self.root, self.config)
+        return next(call.args[0] for call in commands.call_args_list if call.args[0][:2] == ["uv", "publish"])
+
+    def test_it_uploads_through_trusted_publishing_only(self):
+        command = self.publish()
+        self.assertEqual(command[command.index("--trusted-publishing") + 1], "always")
+
+    def test_a_retry_skips_what_pypi_already_has(self):
+        command = self.publish()
+        self.assertEqual(command[command.index("--check-url") + 1], registry.PYPI_INDEX)
+
+    def test_a_conflicting_existing_file_is_a_failure(self):
+        # Identical files are skipped by uv with exit 0. Suppressing this error
+        # could leave the source archive missing after a conflicting wheel.
+        with self.assertRaisesRegex(Failure, "uv publish failed"):
+            self.publish(code=1, stderr="400 Bad Request: File already exists")
+
+    def test_any_other_failure_is(self):
+        with self.assertRaisesRegex(Failure, "uv publish failed"):
+            self.publish(code=1, stderr="invalid-publisher")
+
+
+class PythonRegistryInfoTest(unittest.TestCase):
+    def test_the_action_hears_which_registry_to_set_up(self):
+        outputs = {}
+        with tempfile.TemporaryDirectory() as temp, mock.patch.object(registry, "set_output", outputs.__setitem__):
+            registry.info(Path(temp), config(SUBTITLER))
+        self.assertEqual(outputs["registry"], "pypi")
 
 
 if __name__ == "__main__":

@@ -1,11 +1,11 @@
-# Publishes a released version to its language registry (crates.io or NuGet).
+# Publishes a released version to its language registry (crates.io, NuGet or PyPI).
 #
 # It runs as a job inside each repo's own .github/workflows/playbook.yml rather
 # than inside the shared pipeline, because registries match trusted publishing
 # against the workflow file that does the publishing. No token is stored: the
 # job trades its GitHub identity for a short-lived registry key.
 name: playbook registry
-description: Publish a released version to crates.io or NuGet through trusted publishing.
+description: Publish a released version to crates.io, NuGet or PyPI through trusted publishing.
 
 inputs:
   sha:
@@ -53,6 +53,10 @@ runs:
       uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1.2.0
       with:
         user: ${{ steps.settings.outputs.registry_user }}
+    # uv trades the job's GitHub identity for a PyPI token itself.
+    - name: Set up uv
+      if: steps.settings.outputs.registry == 'pypi'
+      uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
     - name: Publish
       shell: bash
       env:

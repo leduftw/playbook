@@ -44,6 +44,8 @@ if args in (["-h"], ["--help"]) or (args == ["help"] and "help word" not in FAUL
     say("tool help" if "no description" in FAULTS else "A tool that\\nfollows the rules.\\n\\nusage: tool")
 if args in (["-V"], ["--version"], ["version"]):
     say("1.2.3" if "bare version" in FAULTS else "tool 1.2.3")
+if "no update" in FAULTS and "--help" in args:
+    say("A tool that\\nfollows the rules.\\n\\nusage: tool")
 if args == ["update", "--help"] or (args == ["upgrade", "--help"] and "alias" not in FAULTS):
     say("update help")
 if args == ["upgrade", "--help"]:
@@ -89,6 +91,9 @@ class CommandLineCheckTest(unittest.TestCase):
 
     def test_upgrade_must_be_update(self):
         self.assertProblem(self.problems("alias"), "`tool upgrade` isn't the same command as `tool update`")
+
+    def test_update_must_be_a_command_not_a_file_the_general_help_ignores(self):
+        self.assertProblem(self.problems("no update"), "`tool update --help` prints the tool's own help")
 
     def test_a_bare_run_must_exit_0(self):
         self.assertProblem(self.problems("bare"), "`tool` exited 1, not 0")

@@ -8,6 +8,7 @@ format, a lint and a test step, or an explicit reason for skipping one.
 from __future__ import annotations
 
 import re
+import tomllib
 from pathlib import Path
 
 from .config import Check, ConfigError, Release
@@ -66,18 +67,32 @@ CHECK_RUNNERS = {"linux": "ubuntu-24.04", "macos": "macos-15", "windows": "windo
 # Where a registry upload is packed, dry-run and pushed. A .NET tool's macOS
 # packages are built on a Mac: only a Mac can build the Mac-only binaries they
 # carry (release.macos-binaries), and the dry run installs the package for the
-# Mac it runs on.
-REGISTRY_RUNNERS = {"crates-io": CHECK_RUNNERS["linux"], "nuget": CHECK_RUNNERS["macos"]}
+# Mac it runs on. crates.io and PyPI take source and Python, which any system
+# packs alike.
+REGISTRY_RUNNERS = {
+    "crates-io": CHECK_RUNNERS["linux"],
+    "nuget": CHECK_RUNNERS["macos"],
+    "pypi": CHECK_RUNNERS["linux"],
+}
 
 # Tools the checks run, pinned so a new release of one can't turn every repo
 # red overnight; they move with a playbook release.
 RUFF = "ruff@0.17.0"
+TWINE = "twine@7.0.0"
+
+# Turns a Python project into one standalone program for each platform. It runs
+# only on the build machine, so it's no dependency of the tool it builds.
+PYINSTALLER = "pyinstaller==6.22.3"
 
 # Files a self-contained .NET app must carry beside its own licence.
 DOTNET_NOTICES = {
     "LICENSE.txt": "DOTNET-LICENSE.txt",
     "ThirdPartyNotices.txt": "DOTNET-THIRD-PARTY-NOTICES.txt",
 }
+
+# And the file a standalone Python program must carry: Python's own licence.
+PYTHON_NOTICES = {"LICENSE.txt": "PYTHON-LICENSE.txt"}
+PYTHON_THIRD_PARTY_NOTICES = "PYTHON-THIRD-PARTY-NOTICES.txt"
 
 
 def archive_name(name: str, target: str) -> str:
@@ -167,6 +182,9 @@ def version_files(root: Path, release: Release) -> list[Path]:
         manifest, _ = _cargo_version_location(root, release)
         lock = _cargo_lock(root, release)
         return [manifest] + ([lock] if lock else [])
+    if release.stack == "python":
+        module = _python_version_module(root, release)
+        return [_pyproject(root, release)] + ([module] if module else [])
     return [_dotnet_version_file(root, release)]
 
 
@@ -174,6 +192,8 @@ def read_version(root: Path, release: Release) -> str:
     if release.stack == "rust":
         manifest, table = _cargo_version_location(root, release)
         return _toml_table_value(manifest.read_text(encoding="utf-8"), table, "version", manifest)
+    if release.stack == "python":
+        return _read_python_version(root, release)
     path = _dotnet_version_file(root, release)
     return _single_match(_DOTNET_VERSION, path.read_text(encoding="utf-8"), path).group(2)
 
@@ -191,6 +211,19 @@ def write_version(root: Path, release: Release, version: str) -> list[Path]:
         if lock:
             lock.write_text(_set_cargo_lock_version(lock, _crate_name(root, release), old, version))
             changed.append(lock)
+    elif release.stack == "python":
+        manifest = _pyproject(root, release)
+        text = manifest.read_text(encoding="utf-8")
+        manifest.write_text(_set_toml_table_value(text, "project", "version", version, manifest), encoding="utf-8")
+        changed.append(manifest)
+        module = _python_version_module(root, release)
+        if module:
+            text = module.read_text(encoding="utf-8")
+            module.write_text(
+                _PYTHON_VERSION.sub(lambda m: f"{m['prefix']}{m['quote']}{version}{m['quote']}", text),
+                encoding="utf-8",
+            )
+            changed.append(module)
     else:
         path = _dotnet_version_file(root, release)
         text = path.read_text(encoding="utf-8")
@@ -201,6 +234,7 @@ def write_version(root: Path, release: Release, version: str) -> list[Path]:
 
 
 _DOTNET_VERSION = re.compile(r"(<Version>)([^<]+)(</Version>)")
+_PYTHON_VERSION = re.compile(r"""(?m)^(?P<prefix>__version__\s*=\s*)(?P<quote>['"])(?P<version>[^'"\n]*)(?P=quote)""")
 
 
 def _dotnet_version_file(root: Path, release: Release) -> Path:
@@ -210,6 +244,57 @@ def _dotnet_version_file(root: Path, release: Release) -> Path:
         if path.is_file() and _DOTNET_VERSION.search(path.read_text(encoding="utf-8")):
             return path
     raise ConfigError(f"no <Version> in {release.project} or Directory.Build.props")
+
+
+def _pyproject(root: Path, release: Release) -> Path:
+    manifest = root / release.dir / "pyproject.toml"
+    if not manifest.is_file():
+        raise ConfigError(f"no pyproject.toml in {release.dir}")
+    return manifest
+
+
+def python_project(root: Path, release: Release) -> dict:
+    """The [project] table: what pyproject.toml says the package is."""
+    manifest = _pyproject(root, release)
+    return tomllib.loads(manifest.read_text(encoding="utf-8")).get("project", {})
+
+
+def python_entry_points(root: Path, release: Release) -> dict[str, tuple[str, str]]:
+    """The module and function behind each released binary, from [project.scripts]."""
+    scripts = python_project(root, release).get("scripts", {})
+    entries = {}
+    for binary in release.binaries:
+        module, _, function = scripts.get(binary, "").partition(":")
+        if not function:
+            raise ConfigError(f'pyproject.toml needs {binary} = "<module>:<function>" in [project.scripts]')
+        entries[binary] = (module.strip(), function.strip())
+    return entries
+
+
+def _python_version_module(root: Path, release: Release) -> Path | None:
+    """The package's __init__.py, when it records the version too.
+
+    A program can't read pyproject.toml once it's installed or bundled, so a
+    tool often keeps a __version__ of its own, and a release moves both.
+    """
+    directory = root / release.dir
+    for module, _ in python_entry_points(root, release).values():
+        package = module.partition(".")[0]
+        for path in (directory / "src" / package / "__init__.py", directory / package / "__init__.py"):
+            if path.is_file() and _PYTHON_VERSION.search(path.read_text(encoding="utf-8")):
+                return path
+    return None
+
+
+def _read_python_version(root: Path, release: Release) -> str:
+    manifest = _pyproject(root, release)
+    version = _toml_table_value(manifest.read_text(encoding="utf-8"), "project", "version", manifest)
+    module = _python_version_module(root, release)
+    if module:
+        recorded = _single_match(_PYTHON_VERSION, module.read_text(encoding="utf-8"), module).group("version")
+        if recorded != version:
+            raise ConfigError(f"{module} says {recorded}, but {manifest} says {version}")
+    return version
 
 
 def _cargo_version_location(root: Path, release: Release) -> tuple[Path, str]:

@@ -185,6 +185,14 @@ jobs:
         with:
           global-json-file: ${{ matrix.global_json }}
           dotnet-version: ${{ matrix.global_json == '' && '10.0.x' || '' }}
+      # The newest Python, unless the repo pins one: a standalone program keeps
+      # the Python it's built with, and with it that Python's colored help.
+      - name: Set up the Python to bundle
+        if: matrix.stack == 'python'
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version-file: ${{ matrix.python_version_file }}
+          python-version: ${{ matrix.python_version_file == '' && '3.14' || '' }}
       - name: Build and package
         shell: bash
         env:
@@ -265,6 +273,9 @@ jobs:
         with:
           global-json-file: ${{ hashFiles('global.json') != '' && 'global.json' || '' }}
           dotnet-version: ${{ hashFiles('global.json') == '' && '10.0.x' || '' }}
+      - name: Set up uv
+        if: needs.plan.outputs.registry == 'pypi'
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
       - name: Dry-run the channels
         shell: bash
         env:
