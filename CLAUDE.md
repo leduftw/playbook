@@ -44,12 +44,15 @@ actionlint
   package carries (`macos-binaries`, such as monad's Swift capture helper). So a
   NuGet repo's channels dry run and registry job run on macOS; crates.io and PyPI
   uploads are the same from any system and stay on Linux.
-- **A standalone Python program is a single file.** The archives, the installers,
-  Homebrew and WinGet all expect one program, so PyInstaller's folder mode would
-  change all of them. The cost is that the program unpacks itself on every start,
-  which takes a couple of seconds on a Mac, because macOS scans each new copy. That
-  suits tools whose real work takes minutes; a tool that starts often shouldn't be
-  shipped this way.
+- **A standalone Python program is a program with a folder beside it.** A single
+  file would unpack Python and its libraries into a new temporary folder on every
+  start, and macOS checks each new file, which took 2 to 7 seconds per start. Files
+  that stay put are checked once. The folder is `<binary>-runtime-<version>`: tools
+  can share an install folder such as `/usr/local/bin`, and a new version sits
+  beside the old one, so the installers still switch versions with one rename and
+  then remove the older folders. Homebrew keeps both in `libexec` behind a link,
+  and WinGet copies the whole archive and links to the program. The program follows
+  links to find its folder, and the release check runs it through one to prove that.
 - **`ci/frozen_runtime.py` runs first in every standalone Python program.** The
   bundle holds the build machine's Python, whose OpenSSL looks for certificates
   where that machine keeps them, and PyInstaller's bootloader hands its bundled

@@ -99,6 +99,23 @@ def archive_name(name: str, target: str) -> str:
     return f"{name}-{target}.{TARGETS[target]['archive']}"
 
 
+def python_runtime(binary: str, version: str) -> str:
+    """The folder beside a standalone Python program, with Python and its libraries.
+
+    It's named for the tool because tools can share an install folder such as
+    /usr/local/bin, and for the version so a new one can sit beside the old one
+    until a single rename switches programs.
+    """
+    return f"{binary}-runtime-{version}"
+
+
+def runtime_folders(release: Release, version: str) -> list[str]:
+    """The folders a release's programs need beside them; only Python's have any."""
+    if release.stack != "python":
+        return []
+    return [python_runtime(binary, version) for binary in release.binaries]
+
+
 def registry_runner(registry: str | None) -> str:
     return REGISTRY_RUNNERS.get(registry or "", CHECK_RUNNERS["linux"])
 

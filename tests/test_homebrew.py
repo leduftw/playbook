@@ -47,6 +47,17 @@ class FormulaTest(unittest.TestCase):
         self.assertIn('depends_on "ffmpeg"', macos)
         self.assertIn('depends_on "ffmpeg"', linux)
 
+    def test_a_python_program_stays_beside_its_runtime_behind_a_link(self):
+        text = render(config(SUBTITLER), "1.2.3", "leduftw/subtitler", urls("subtitler"), DIGESTS)
+        self.assertIn('libexec.install "subtitler", "subtitler-runtime-1.2.3"', text)
+        self.assertIn('bin.install_symlink libexec/"subtitler"', text)
+        self.assertNotIn('bin.install "subtitler"', text)
+        self.assertIn('assert_match version.to_s, shell_output("#{bin}/subtitler --version")', text)
+
+    def test_other_programs_still_go_straight_into_bin(self):
+        text = render(config(DBIRD), "1.3.0", "leduftw/dbird", urls("dbird"), DIGESTS)
+        self.assertNotIn("libexec", text)
+
     def test_a_linux_dependency_stays_off_macos(self):
         text = render(config(MONAD), "2.0.2", "leduftw/monad", urls("monad"), DIGESTS)
         macos = text.split("on_macos do", 1)[1].split("on_linux do", 1)[0]

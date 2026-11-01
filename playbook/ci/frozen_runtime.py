@@ -38,8 +38,8 @@ def use_system_certificates(environment: MutableMapping[str, str]) -> None:
 def restore_library_path(environment: MutableMapping[str, str]) -> None:
     """Keep the programs this one starts away from its bundled libraries.
 
-    The bootloader adds the unpacked program to LD_LIBRARY_PATH, and a child such
-    as ffmpeg inherits that and would load those libraries instead of its own.
+    The bootloader adds the program's runtime folder to LD_LIBRARY_PATH, and a child
+    such as ffmpeg inherits that and would load those libraries instead of its own.
     The program itself is safe: the system reads the variable only at startup.
     """
     original = environment.pop("LD_LIBRARY_PATH_ORIG", None)

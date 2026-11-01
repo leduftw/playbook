@@ -15,8 +15,8 @@ $previousProgressPreference = $ProgressPreference
 $ProgressPreference = "SilentlyContinue"
 
 # Windows can hold an executable briefly after it exits, and antivirus scanners
-# open new files, so replacing a binary retries for a few seconds.
-function Move-StagedFile {
+# open new files, so replacing a binary or a folder retries for a few seconds.
+function Move-Staged {
     param(
         [Parameter(Mandatory = $true)] [string] $Source,
         [Parameter(Mandatory = $true)] [string] $Destination
@@ -24,6 +24,9 @@ function Move-StagedFile {
 
     for ($attempt = 1; $attempt -le 20; $attempt++) {
         try {
+            if (Test-Path $Destination -PathType Container) {
+                Remove-Item $Destination -Recurse -Force
+            }
             Move-Item $Source $Destination -Force
             return
         } catch {
@@ -69,6 +72,7 @@ $checksums = Join-Path $workDir "SHA256SUMS"
 $payload = Join-Path $workDir "payload"
 $binaries = @(@@WINDOWS_BINARIES@@)
 $staged = @()
+$stagedFolders = @()
 
 try {
     New-Item -ItemType Directory -Path $workDir | Out-Null
@@ -91,6 +95,17 @@ try {
     Expand-Archive -Path $archive -DestinationPath $payload -Force
     New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
 
+    # A standalone Python program needs a folder of libraries beside it. The folder
+    # is named for its version, so it can arrive while the old version keeps working.
+    $folders = @(Get-ChildItem $payload -Directory | ForEach-Object { $_.Name })
+    foreach ($folder in $folders) {
+        $stage = Join-Path $InstallDir (".$folder." + [guid]::NewGuid() + ".new")
+        $stagedFolders += $stage
+        Copy-Item (Join-Path $payload $folder) $stage -Recurse
+        Move-Staged -Source $stage -Destination (Join-Path $InstallDir $folder)
+    }
+    $stagedFolders = @()
+
     foreach ($binary in $binaries) {
         $source = Join-Path $payload $binary
         if (-not (Test-Path $source -PathType Leaf)) {
@@ -103,9 +118,17 @@ try {
 
     $installedVersion = & $staged[0] @@VERSION_ARGS@@
     for ($index = 0; $index -lt $binaries.Count; $index++) {
-        Move-StagedFile -Source $staged[$index] -Destination (Join-Path $InstallDir $binaries[$index])
+        Move-Staged -Source $staged[$index] -Destination (Join-Path $InstallDir $binaries[$index])
     }
     $staged = @()
+
+    # The programs have switched, so nothing runs from the older versions' folders.
+    foreach ($binary in $binaries) {
+        $stem = [System.IO.Path]::GetFileNameWithoutExtension($binary)
+        Get-ChildItem $InstallDir -Directory -Filter "$stem-runtime-*" |
+            Where-Object { $folders -notcontains $_.Name } |
+            ForEach-Object { Remove-Item $_.FullName -Recurse -Force -ErrorAction SilentlyContinue }
+    }
 
     if ($env:@@PREFIX@@_NO_PATH_UPDATE -ne "1") {
         $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
@@ -123,8 +146,8 @@ try {
 @@NOTES@@
 } finally {
     $ProgressPreference = $previousProgressPreference
-    foreach ($file in $staged) {
-        if (Test-Path $file) { Remove-Item $file -Force }
+    foreach ($item in $staged + $stagedFolders) {
+        if (Test-Path $item) { Remove-Item $item -Recurse -Force }
     }
     if (Test-Path $workDir) {
         Remove-Item $workDir -Recurse -Force

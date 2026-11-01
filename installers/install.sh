@@ -17,7 +17,7 @@ work_dir=
 staged=
 
 cleanup() {
-  for file in $staged; do rm -f -- "$file"; done
+  for file in $staged; do rm -rf -- "$file"; done
   [ -z "$work_dir" ] || rm -rf -- "$work_dir"
 }
 
@@ -138,9 +138,23 @@ main() {
     binaries="$binaries @@MACOS_BINARIES@@"
   fi
 
+  mkdir -p "$install_dir"
+
+  # A standalone Python program needs a folder of libraries beside it. The folder
+  # is named for its version, so it can arrive while the old version keeps working.
+  folders=
+  for folder in "$payload"/*/; do
+    [ -d "$folder" ] || continue
+    folder=$(basename "$folder")
+    cp -RP "$payload/$folder" "$install_dir/.$folder.$$.new"
+    staged="$staged $install_dir/.$folder.$$.new"
+    rm -rf -- "${install_dir:?}/$folder"
+    mv "$install_dir/.$folder.$$.new" "$install_dir/$folder"
+    folders="$folders $folder"
+  done
+
   # Stage every binary next to its destination first, so an upgrade replaces
   # each one with a single rename and never leaves a half-copied file behind.
-  mkdir -p "$install_dir"
   for binary in $binaries; do
     [ -f "$payload/$binary" ] || fail "$asset did not contain $binary"
     install -m 755 "$payload/$binary" "$install_dir/.$binary.$$.new"
@@ -151,6 +165,17 @@ main() {
     mv -f "$install_dir/.$binary.$$.new" "$install_dir/$binary"
   done
   staged=
+
+  # The programs have switched, so the folders of older versions can go.
+  for binary in $binaries; do
+    for folder in "$install_dir/$binary"-runtime-*; do
+      [ -d "$folder" ] || continue
+      case " $folders " in
+        *" ${folder##*/} "*) ;;
+        *) rm -rf -- "$folder" ;;
+      esac
+    done
+  done
   echo "Installed $installed in $install_dir"
 
   case :${PATH:-}: in

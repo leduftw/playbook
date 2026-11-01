@@ -73,7 +73,13 @@ def render(config: Config, version: str, repo: str, urls: dict[str, str], digest
         lines.append(
             f'    odie "{config.name} needs macOS {minimum} or newer" if OS.mac? && MacOS.version < {_ruby(minimum)}'
         )
-    lines += [f"    bin.install {_ruby(binary)}" for binary in release.binaries]
+    if stacks.runtime_folders(release, version):
+        # The program finds its runtime beside it, and follows the link to get there.
+        for binary in release.binaries:
+            lines.append(f"    libexec.install {_ruby(binary)}, {_ruby(stacks.python_runtime(binary, version))}")
+            lines.append(f"    bin.install_symlink libexec/{_ruby(binary)}")
+    else:
+        lines += [f"    bin.install {_ruby(binary)}" for binary in release.binaries]
     lines += [f"    bin.install {_ruby(binary)} if OS.mac?" for binary in release.macos_binaries]
     lines += [f"    {line}" for line in release.homebrew.install]
     lines.append("  end")

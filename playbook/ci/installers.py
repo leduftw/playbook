@@ -150,15 +150,22 @@ def smoke(root: Path, config: Config, target: str, version: str, dist: Path) -> 
                 script = work / "install.sh"
                 script.write_text(render_sh(config, repo), encoding="utf-8")
                 run(["sh", str(script)], env=env)
+                _leave_an_older_runtime(config, install_dir)
                 run(["sh", str(script)], env=env)  # the second pass is an in-place upgrade
         finally:
             server.shutdown()
+            server.server_close()
 
         suffix = ".exe" if os_name == "windows" else ""
         names = release.binaries + (release.macos_binaries if os_name == "macos" else [])
         for name in names:
             if not (install_dir / f"{name}{suffix}").is_file():
                 raise Failure(f"the installer didn't install {name}{suffix}")
+        for folder in stacks.runtime_folders(release, version):
+            if not (install_dir / folder).is_dir():
+                raise Failure(f"the installer didn't install {folder}")
+        if (install_dir / _older_runtime(config)).exists():
+            raise Failure(f"the installer left {_older_runtime(config)} behind")
         leftovers = [p.name for p in install_dir.iterdir() if p.name.startswith(".")]
         if leftovers:
             raise Failure(f"the installer left staged files behind: {leftovers}")
@@ -171,6 +178,19 @@ def smoke(root: Path, config: Config, target: str, version: str, dist: Path) -> 
     say(f"the installer installed and upgraded {config.name} {version}")
 
 
+def _older_runtime(config: Config) -> str:
+    release = config.release
+    assert release is not None
+    return stacks.python_runtime(release.binaries[0], "0.0.0")
+
+
+def _leave_an_older_runtime(config: Config, install_dir: Path) -> None:
+    """What an upgrade finds from the version before; it has to tidy this away."""
+    older = install_dir / _older_runtime(config)
+    older.mkdir()
+    (older / "library").write_text("left by the version before", encoding="utf-8")
+
+
 def _smoke_windows(config: Config, repo: str, work: Path, env: dict[str, str], install_dir: Path) -> None:
     release = config.release
     assert release is not None
@@ -178,6 +198,7 @@ def _smoke_windows(config: Config, repo: str, work: Path, env: dict[str, str], i
     script.write_text(render_ps1(config, repo), encoding="utf-8")
     command = ["pwsh", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script)]
     run(command, env=env)
+    _leave_an_older_runtime(config, install_dir)
 
     # Hold the installed binary open without delete sharing until the upgrade
     # has staged its replacement, so the first replace attempt must fail and
