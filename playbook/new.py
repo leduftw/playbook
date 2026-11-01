@@ -95,8 +95,12 @@ def scaffold(root: Path, name: str, stack: str, published: bool) -> None:
         (root / "src" / package / "__init__.py").write_text(f'"""{name}."""\n', encoding="utf-8")
         (root / "tests").mkdir()
         (root / "tests" / "__init__.py").write_text("", encoding="utf-8")
+        # The checks run the tests without installing the project, so a test
+        # finds the code in src/ itself.
         (root / "tests" / "test_import.py").write_text(
-            "import unittest\n\n\nclass ImportTest(unittest.TestCase):\n"
+            "import sys\nimport unittest\nfrom pathlib import Path\n\n"
+            'sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))\n\n\n'
+            "class ImportTest(unittest.TestCase):\n"
             f'    def test_imports(self):\n        __import__("{package}")\n',
             encoding="utf-8",
         )

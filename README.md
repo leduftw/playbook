@@ -157,7 +157,7 @@ its `Cellar`.
 | Installed with | Recognized by | `update` runs |
 | --- | --- | --- |
 | Homebrew | `/Cellar/<name>/` in the path | `brew upgrade leduftw/tap/<name>` |
-| WinGet | `\Microsoft\WinGet\` in the path | `winget upgrade --id leduftw.<name>` |
+| WinGet | a folder named `leduftw.<name>_Microsoft.Winget.Source_8wekyb3d8bbwe` in the path, which WinGet uses wherever it installs | `winget upgrade --id leduftw.<name>` |
 | crates.io | Cargo's `bin` folder | `cargo install <name> --locked` |
 | NuGet | `.store/<package id>/` in the path | `dotnet tool update --tool-path <folder> <package id>`, for the folder holding that `.store` |
 | PyPI, with uv | `uv-receipt.toml` in the Python environment running it | `uv tool upgrade <package>` |

@@ -90,8 +90,7 @@ DOTNET_NOTICES = {
     "ThirdPartyNotices.txt": "DOTNET-THIRD-PARTY-NOTICES.txt",
 }
 
-# And the file a standalone Python program must carry: Python's licence, which
-# also covers the third-party libraries Python itself bundles.
+# And the file a standalone Python program must carry: Python's own licence.
 PYTHON_NOTICES = {"LICENSE.txt": "PYTHON-LICENSE.txt"}
 
 
