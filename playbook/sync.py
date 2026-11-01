@@ -13,7 +13,7 @@ from pathlib import Path
 
 from . import REPOSITORY, render, version
 from .config import CONFIG_PATH, load
-from .util import Failure, gh, gh_json, git, repository, run, say, warn
+from .util import Failure, commit_subject, gh, gh_json, git, pr_title, repository, run, say, warn
 
 
 def sync_here(root: Path) -> list[str]:
@@ -94,7 +94,8 @@ def sync_repo(repo: str, dry_run: bool = False) -> str | None:
             return open_prs[0]["url"]
         git("switch", "--quiet", "-c", branch, cwd=root)
         git("add", "-A", cwd=root)
-        git("commit", "--quiet", "-m", f"update playbook files to {version()}", cwd=root)
+        message = f"update playbook files to {version()}"
+        git("commit", "--quiet", "-m", message, cwd=root)
         pushed = run(["git", "push", "--quiet", "-u", "origin", branch], cwd=root, check=False, capture=True)
         if pushed.returncode != 0:
             raise Failure(f"{repo}: couldn't push {branch} (an old sync branch may exist): {pushed.stderr.strip()}")
@@ -113,7 +114,7 @@ def sync_repo(repo: str, dry_run: bool = False) -> str | None:
             "--head",
             branch,
             "--title",
-            f"update playbook files to {version()}",
+            pr_title(message),
             "--body",
             body,
             "--label",
@@ -123,7 +124,10 @@ def sync_repo(repo: str, dry_run: bool = False) -> str | None:
         # Without a ruleset, auto-merge has nothing to wait for and would merge
         # before the checks ran; such PRs are landed with playbook finish.
         if has_required_checks(repo):
-            merged = run(["gh", "pr", "merge", url, "--auto", "--squash"], check=False, capture=True)
+            subject = commit_subject(message, url.rsplit("/", 1)[-1])
+            merged = run(
+                ["gh", "pr", "merge", url, "--auto", "--squash", "--subject", subject], check=False, capture=True
+            )
             if merged.returncode != 0:
                 warn(f"{repo}: couldn't turn on auto-merge; land {url} with playbook finish")
         else:

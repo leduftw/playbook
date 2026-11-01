@@ -104,6 +104,10 @@ class ManagedFilesTest(unittest.TestCase):
         self.assertIn("uses: ./.github/workflows/pipeline.yml", workflow)
         self.assertIn("github.event.pull_request.head.sha || github.sha", workflow)
 
+    def test_the_workflow_shows_as_ci(self):
+        files = render.managed_files(self.root, config(DBIRD))
+        self.assertEqual(files[".github/workflows/playbook.yml"].splitlines()[2], "name: CI")
+
     def test_title_workflow_runs_on_title_edits(self):
         files = render.managed_files(self.root, config(LOCAL))
         self.assertIn("types: [opened, edited, reopened, synchronize]", files[".github/workflows/playbook-title.yml"])

@@ -14,7 +14,7 @@ from . import semver, stacks
 from .config import Config, load
 from .settings import missing_release_setup
 from .sync import _is_playbook
-from .util import Failure, gh, git, remote_tags, repository, say
+from .util import Failure, gh, git, pr_title, remote_tags, repository, say
 from .worktree import WORKTREES, ensure_hooks, primary_checkout
 
 
@@ -78,7 +78,8 @@ def open_release(kind: str) -> str:
     git("worktree", "add", "--no-track", "-b", branch, str(path), "HEAD", cwd=root)
     changed = _write_version(path, config, self_repo, str(version))
     git("add", *[str(p.relative_to(path)) for p in changed], cwd=path)
-    git("commit", "--quiet", "-m", f"release {version}", cwd=path)
+    message = f"release {version}"
+    git("commit", "--quiet", "-m", message, cwd=path)
     git("push", "--quiet", "-u", "origin", branch, cwd=path)
 
     if self_repo:
@@ -114,7 +115,7 @@ def open_release(kind: str) -> str:
         "--head",
         branch,
         "--title",
-        f"release {version}",
+        pr_title(message),
         "--body",
         body,
         "--label",

@@ -7,7 +7,16 @@ from unittest import mock
 
 from playbook import stacks
 from playbook.ci import build
-from playbook.ci.build import EXECUTABLE, REGULAR, check_binary, expected_files, extract, smoke, write_archive
+from playbook.ci.build import (
+    EXECUTABLE,
+    REGULAR,
+    check_binary,
+    expected_files,
+    extract,
+    repo_description,
+    smoke,
+    write_archive,
+)
 from playbook.config import ConfigError
 from playbook.util import Failure
 from tests.fixtures import DBIRD, MONAD, PYPROJECT, SUBTITLER, config
@@ -64,9 +73,19 @@ class ArchiveTest(unittest.TestCase):
         # It is a script in this test; all the smoke test's process calls are real.
         with (
             mock.patch("playbook.ci.build.check_binary"),
+            mock.patch("playbook.ci.build.repo_description", return_value="a tool that follows the rules"),
             self.assertRaisesRegex(Failure, r"`tool --not-an-option-of-this-tool` exited 1, not 2"),
         ):
             smoke(self.work, cfg, "linux-x64", "1.2.3", self.work)
+
+    def test_a_repo_needs_a_description_for_its_help_to_use(self):
+        with (
+            mock.patch("playbook.ci.build.repository", return_value="o/r"),
+            mock.patch("playbook.ci.build.gh", return_value="") as gh,
+            self.assertRaisesRegex(Failure, "no GitHub description"),
+        ):
+            repo_description()
+        gh.assert_called_once_with("api", "repos/o/r", "--jq", ".description")
 
 
 class CheckBinaryTest(unittest.TestCase):

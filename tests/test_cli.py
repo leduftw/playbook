@@ -54,7 +54,7 @@ class HelpTest(unittest.TestCase):
                 self.assertEqual(sum(1 for words in lines if words[:1] == [name]), 1)
 
     def test_the_description_is_the_repos_description(self):
-        self.assertIn("one standard for how my repos are worked on, checked and released\n", run("--help")[1])
+        self.assertIn("One standard for how my repos are worked on, checked and released.\n", run("--help")[1])
 
 
 class VersionTest(unittest.TestCase):

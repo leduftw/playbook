@@ -1,6 +1,6 @@
 # playbook
 
-One standard for how every one of my repos is worked on, checked and released.
+One standard for how my repos are worked on, checked and released.
 Repos differ in what they do. Everything around the code is the same, it lives
 here, and changing it here changes it everywhere.
 
@@ -20,14 +20,23 @@ repo what a release contains). Everything else comes from this repo.
 - **`playbook finish` lands it:** waits for the checks, merges `main` in if it
   moved, squash-merges, deletes the worktree and branch, pulls `main`, and
   confirms the issue closed.
-- **Squash is the only merge method.** The PR title becomes the commit on
-  `main`, written in one style: a lowercase verb first, plain words, no
-  `feat:`-style prefix, no full stop (`fix Windows installer replacement`).
-  The `playbook / title` check enforces it.
+- **Squash is the only merge method.** Each PR lands on `main` as one commit,
+  written in one style: a lowercase verb first, plain words, no `feat:`-style
+  prefix, no full stop (`fix Windows installer replacement (#12)`).
+- **PR titles start with a capital:** the same words as the commit, with a
+  capital first letter (`Fix Windows installer replacement`). The
+  `playbook / title` check enforces it. A title doesn't become the commit:
+  `playbook finish` and the automatic merges set the commit's subject
+  themselves, so PRs don't land through GitHub's merge button.
 - **The same checks everywhere:** formatting, lint with warnings as errors, and
   tests. Published repos run them on macOS, Linux and Windows; local repos on
   Linux unless their code depends on the OS. A step can only be skipped with a
-  written reason in `playbook.toml`.
+  written reason in `playbook.toml`. They run in a workflow called `CI`, whose
+  file is `playbook.yml`.
+- **Every README opens the same way:** `# <name>`, then the repo's GitHub
+  description written as a sentence. What follows belongs to the repo.
+  `playbook new` writes that opening, and `playbook audit` reports a README
+  that's missing or opens differently.
 - **`AGENTS.md` and `CLAUDE.md` are identical**, so Codex and Claude Code read
   the same instructions. Part of them is the playbook's section, kept in sync
   from here; the rest belongs to the repo.
@@ -75,14 +84,19 @@ and [subtitler](https://github.com/leduftw/subtitler).
     stored anywhere: crates.io (`cargo install <name> --locked`), NuGet
     (`dotnet tool install -g <package id>`) or PyPI (`uv tool install <package>`)
 - **A failed channel is retried without a new release:** once the cause is
-  fixed (an expired token, say), `gh workflow run playbook --ref main` updates
-  the channels of the latest release from its published files. Each channel
-  runs on its own, so one failing never holds back the others.
+  fixed (an expired token, say), `gh workflow run playbook.yml --ref main`
+  updates the channels of the latest release from its published files. Each
+  channel runs on its own, so one failing never holds back the others.
 - **Topics say what it is, so strangers can find it:** 5–10 of them covering
   what the program is, its language, and the platforms it runs on. Platform
   topics (`macos`, `windows`, `linux`) are all of the release's platforms or
   none, never a subset, which would read as "only runs here". Local repos need
   no topics: nobody searches for them.
+- **The README has what people look for:** the CI and latest-release badges
+  sit between the title and the description, and the sections `Install`,
+  `Usage`, `Development` and `License` come in that order, with anything else
+  the tool needs in between. `playbook audit` reports what's missing. Local
+  repos need neither: nobody installs them.
 - **Release files have stable names:** `<name>-<os>-<arch>.zip` (macOS, Windows)
   or `.tar.gz` (Linux), such as `dbird-macos-arm64.zip`. The version is in the
   release's address, not the file name, so `releases/latest/download/...`
@@ -98,7 +112,9 @@ open:
 
 - **Help:** `-h`, `--help` and `help` print the help to stdout and exit 0, and
   `help <command>` shows one command's. The help describes the tool with the
-  repo's GitHub description, word for word.
+  repo's GitHub description written as a sentence: the same words with a capital
+  first letter and a full stop, so `subtitles for any video` on GitHub is
+  `Subtitles for any video.` in the help.
 - **Version:** `-V`, `--version` and `version` print exactly `<name> <version>`,
   such as `dbird 1.3.0`, and exit 0. `-v` is left for `--verbose`.
 - **Mistakes:** an unknown command or option, or a missing or wrong value,
@@ -158,7 +174,8 @@ a running program, so there `update` starts the update and exits.
 
 Every release PR checks a published tool's behavior against these rules, on
 all six platforms, with its real binary: `-h`, `--help` and `help` print the
-same help to stdout; `-V`, `--version` and `version` print exactly
+same help to stdout, using the repo's description as a sentence; `-V`,
+`--version` and `version` print exactly
 `<name> <version>`; an unknown option exits 2 with a message on stderr only;
 `update --help` and `upgrade --help` show the same command, with help of its
 own; and a bare run with
@@ -202,7 +219,7 @@ the commands, `playbook help <command>` shows one command's options, and
 | `playbook new <name> --published\|--local --stack <stack> --description "..." [--topics "..."]` | Starts a repo that follows the playbook |
 | `playbook sync [--here \| <repo>... \| --all]` | Brings the playbook's files in a repo up to date |
 | `playbook settings [<repo>... \| --all]` | Applies the shared GitHub settings |
-| `playbook audit [--here \| <repo>... \| --all]` | Reports anything that differs from the playbook, including missing or misleading topics, README badges that point at removed workflows, and Dependabot PRs waiting more than a week |
+| `playbook audit [--here \| <repo>... \| --all]` | Reports anything that differs from the playbook, including missing or misleading topics, a README that doesn't follow the standard, README badges that point at removed workflows, and Dependabot PRs waiting more than a week |
 
 ## Starting a repo
 

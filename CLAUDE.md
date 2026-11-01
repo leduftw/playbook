@@ -61,6 +61,14 @@ actionlint
 - **A change to anything that renders into repos ships as a release.** Merged
   changes reach repos only when `VERSION` moves. A change that needs repos to change
   is a new major.
+- **Whatever merges a PR sets the commit's subject.** PR titles start with a capital
+  and commits don't, and GitHub would copy the title. So `finish`, `sync`'s auto-merge
+  and the pipeline's Dependabot job all pass `--subject`, and anything new that merges
+  a PR must too.
+- **The workflow is called `CI`, but its file stays `playbook.yml`.** The README badge
+  shows the display name, and crates.io and NuGet match trusted publishing against the
+  file name. `gh workflow run` and `workflow_run` triggers go by the display name, so
+  documented commands name the file, and horizon's `Release` trigger lists `CI`.
 - **The installers keep their whole body in `main`, called on the last line.**
   People pipe them into `sh`, and a shell reading a pipe runs each command as it
   arrives, so a dropped connection must not run half the script.
@@ -77,25 +85,27 @@ The facts about this repo live in `.github/playbook.toml`. Everything in this se
 1. **Start from an issue.** Reuse the issue that describes the change, or create one assigned to `leduftw` with at least one label.
 2. **Work in your own worktree.** Run `playbook start <issue>`: it creates `~/Developer/.worktrees/playbook/<issue>-<slug>` on branch `dev/leduftw/<issue>-<slug>`, based on the latest `main`. Work only there. Another session may be working at the same time, so never edit the primary checkout; it stays on `main` and only moves with `git pull`.
 3. **Commit and push** each finished slice to that branch, without pausing for confirmation.
-4. **Open the PR** with `gh pr create --base main`. Its title becomes the commit on `main`, so it follows the commit style below. Put `Closes #<issue>` in the body when the PR fully resolves the issue.
+4. **Open the PR** with `gh pr create --base main`. Its title follows the PR title style below. Put `Closes #<issue>` in the body when the PR fully resolves the issue.
 5. **Land it with `playbook finish`.** It waits for the required checks, merges `main` into the branch if `main` has moved on, squash-merges, removes the worktree and the branch, pulls `main`, and confirms the issue is closed. If a check fails, fix it on the branch and run `playbook finish` again.
 
 Sessions that don't change this repo's files (reading, planning, answering questions, running its tools) need no issue and no worktree.
 
 **Never** commit or push to `main` (hooks and a GitHub ruleset refuse it), rebase a branch that's already pushed, or force-push. To catch up with `main`, merge it into your branch.
 
-**Commit style:** start with a lowercase verb that says what the change does, then plain words, with no `feat:`-style prefix and no full stop. Names keep their capitals: `fix Windows installer replacement`, `add opt-in global leaderboard`. The `playbook / title` check rejects PR titles that break this.
+**Commit style:** start with a lowercase verb that says what the change does, then plain words, with no `feat:`-style prefix and no full stop. Names keep their capitals: `fix Windows installer replacement`, `add opt-in global leaderboard`.
+
+**PR title style:** the same words with a capital first letter: `Fix Windows installer replacement`. The `playbook / title` check rejects titles that break this. A PR title doesn't become the commit: `playbook finish` gives the squash commit on `main` the commit style, so don't use GitHub's merge button.
 
 **Without the `playbook` command** (a cloud session, a fresh machine), do the same by hand:
 
 - start: `git fetch origin`, then `git worktree add -b dev/leduftw/<issue>-<slug> ~/Developer/.worktrees/playbook/<issue>-<slug> origin/main` (a cloud session is already isolated, so a branch from `origin/main` is enough)
-- finish: `gh pr checks --watch --required`, then `gh pr merge --squash`; once the PR shows `MERGED`, `git worktree remove <path>`, `git branch -D <branch>` (`-d` refuses, because squash commits aren't ancestors of `main`) and `git pull --ff-only` in the primary checkout
+- finish: `gh pr checks --watch --required`, then `gh pr merge --squash --subject "<the PR title with a lowercase first letter> (#<PR number>)"`; once the PR shows `MERGED`, `git worktree remove <path>`, `git branch -D <branch>` (`-d` refuses, because squash commits aren't ancestors of `main`) and `git pull --ff-only` in the primary checkout
 
 ### Command-line tools
 
 A command-line tool here follows the [Command Line Interface Guidelines](https://clig.dev) and the playbook's [rules for command-line tools](https://github.com/leduftw/playbook#how-command-line-tools-behave), in short:
 
-- `-h`/`--help` print the help, which describes the tool with the repo's GitHub description, and `-V`/`--version` print exactly `<name> <version>`, both to stdout with exit 0. Every tool also takes `help [<command>]` and `version`, even one whose arguments are data: `./help` reaches a file with that name.
+- `-h`/`--help` print the help, which describes the tool with the repo's GitHub description written as a sentence (a capital first letter and a full stop), and `-V`/`--version` print exactly `<name> <version>`, both to stdout with exit 0. Every tool also takes `help [<command>]` and `version`, even one whose arguments are data: `./help` reaches a file with that name.
 - A wrong command, option or value prints a message to stderr and exits 2. A command that ran and failed exits 1.
 - Started with no arguments at all, the tool does its default job. If something that job needs isn't set up yet (a token, a terminal), it prints the help plus one line saying what's missing, and exits 0. An explicit command still fails when its requirements are missing; an existing config that can't be read is an error either way.
 - Help uses the colors of Python 3.14's `argparse`, only in a terminal, and none with `NO_COLOR`, `TERM=dumb` or `--no-color`.

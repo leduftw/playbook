@@ -41,11 +41,11 @@ if not args:
                 say("tool: inherited a shared config token", 1, sys.stderr)
     say("tool help\\nTo start, set TOOL_TOKEN.")
 if args in (["-h"], ["--help"]) or (args == ["help"] and "help word" not in FAULTS):
-    say("tool help")
+    say("tool help" if "no description" in FAULTS else "A tool that\\nfollows the rules.\\n\\nusage: tool")
 if args in (["-V"], ["--version"], ["version"]):
     say("1.2.3" if "bare version" in FAULTS else "tool 1.2.3")
 if "no update" in FAULTS and "--help" in args:
-    say("tool help")
+    say("A tool that\\nfollows the rules.\\n\\nusage: tool")
 if args == ["update", "--help"] or (args == ["upgrade", "--help"] and "alias" not in FAULTS):
     say("update help")
 if args == ["upgrade", "--help"]:
@@ -64,7 +64,7 @@ class CommandLineCheckTest(unittest.TestCase):
         tool = Path(self.temp.name) / "tool"
         tool.write_text(f"#!{sys.executable}\n" + TOOL.format(faults=set(faults)), encoding="utf-8")
         tool.chmod(0o755)
-        return command_line.check(tool, "tool", "1.2.3", timeout=5)
+        return command_line.check(tool, "tool", "1.2.3", "a tool that follows the rules", timeout=5)
 
     def assertProblem(self, problems: list[str], words: str):
         self.assertTrue(any(words in problem for problem in problems), f"{words!r} not in {problems}")
@@ -82,6 +82,12 @@ class CommandLineCheckTest(unittest.TestCase):
         problems = self.problems("help word")
         self.assertProblem(problems, "`tool help` exited 2, not 0")
         self.assertProblem(problems, "print different help")
+
+    def test_the_help_must_use_the_description_as_a_sentence(self):
+        self.assertProblem(
+            self.problems("no description"),
+            "`tool --help` doesn't describe the tool as 'A tool that follows the rules.'",
+        )
 
     def test_upgrade_must_be_update(self):
         self.assertProblem(self.problems("alias"), "`tool upgrade` isn't the same command as `tool update`")

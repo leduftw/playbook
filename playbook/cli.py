@@ -12,8 +12,8 @@ from . import semver, version
 from .config import ConfigError, load
 from .util import Failure, UsageError, say
 
-# The repo's GitHub description: a tool's help and its repo describe it the same way.
-DESCRIPTION = "one standard for how my repos are worked on, checked and released"
+# The repo's GitHub description as a sentence: a tool's help and its repo describe it in the same words.
+DESCRIPTION = "One standard for how my repos are worked on, checked and released."
 
 
 class ArgumentParser(argparse.ArgumentParser):
