@@ -2,8 +2,9 @@
 
 The rules are in the README's "How command-line tools behave". The release
 smoke test runs this against the real binary on every platform. It tests
-behavior, not layout: which words and flags work, what goes to stdout and
-stderr, the exit codes, and that output away from a terminal stays plain.
+behavior, not layout: which words and flags work, that the help uses the repo's
+description, what goes to stdout and stderr, the exit codes, and that output
+away from a terminal stays plain.
 """
 
 from __future__ import annotations
@@ -13,6 +14,8 @@ import re
 import subprocess
 import tempfile
 from pathlib import Path
+
+from ..util import sentence
 
 UNKNOWN_OPTION = "--not-an-option-of-this-tool"
 
@@ -24,7 +27,7 @@ _CREDENTIAL = re.compile(r"(TOKEN|KEY|SECRET|PASSWORD|CREDENTIALS?)(_|$)", re.IG
 _FORCE_COLORS = {"FORCE_COLOR": "1", "CLICOLOR_FORCE": "1", "PYTHON_COLORS": "1", "TERM": "xterm-256color"}
 
 
-def check(binary: Path, name: str, version: str, timeout: float = 60) -> list[str]:
+def check(binary: Path, name: str, version: str, description: str, timeout: float = 60) -> list[str]:
     """Runs the binary the ways the rules describe and returns what's wrong, if anything."""
     problems: list[str] = []
     with tempfile.TemporaryDirectory(prefix="playbook-command-line-") as temp:
@@ -62,6 +65,11 @@ def check(binary: Path, name: str, version: str, timeout: float = 60) -> list[st
         helps = {form: run(form, code=0) for form in ("-h", "--help", "help")}
         if len(set(helps.values())) > 1:
             problems.append(f"`{name} -h`, `{name} --help` and `{name} help` print different help")
+
+        # A parser may wrap the sentence, so line breaks don't count.
+        described = sentence(description)
+        if described not in " ".join(helps["--help"].split()):
+            problems.append(f"`{name} --help` doesn't describe the tool as {described!r}")
 
         wanted = f"{name} {version}"
         for form in ("-V", "--version", "version"):

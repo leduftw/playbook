@@ -16,7 +16,7 @@ from . import settings
 from . import topics as repo_topics
 from .config import load
 from .sync import sync_here
-from .util import Failure, UsageError, gh, git, run, say
+from .util import Failure, UsageError, gh, git, run, say, sentence
 
 DEVELOPER = Path.home() / "Developer"
 
@@ -132,7 +132,7 @@ def new(name: str, published: bool, private: bool, stack: str, description: str,
     git("init", "--quiet", "-b", "main", cwd=root)
     scaffold(root, name, stack, published)
 
-    (root / "README.md").write_text(f"# {name}\n\n{description[0].upper() + description[1:]}.\n", encoding="utf-8")
+    (root / "README.md").write_text(f"# {name}\n\n{sentence(description)}\n", encoding="utf-8")
     (root / ".gitignore").write_text("\n".join([".DS_Store", *GITIGNORE[stack]]) + "\n", encoding="utf-8")
     (root / ".gitattributes").write_text("* text=auto\n.githooks/* text eol=lf\n*.sh text eol=lf\n", encoding="utf-8")
     if not private:
@@ -174,6 +174,7 @@ def new(name: str, published: bool, private: bool, stack: str, description: str,
     if published:
         binary = name
         todo.append(f"make `{binary} --version` print the version; every release's smoke test runs it")
+        todo.append(f"make `{binary} --help` say {sentence(description)!r}; the smoke test checks that too")
         registry = "crates.io" if stack == "rust" else "NuGet"
         todo.append(
             f"on {registry}, add a trusted publisher: repository {repo}, workflow playbook.yml, environment release"
