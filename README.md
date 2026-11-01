@@ -97,7 +97,9 @@ open:
 
 - **Help:** `-h` and `--help` print the help to stdout and exit 0. A tool with
   subcommands also takes `help` and `help <command>`. The help describes the
-  tool with the repo's GitHub description, word for word.
+  tool with the repo's GitHub description written as a sentence: the same words
+  with a capital first letter and a full stop, so `subtitles for any video` on
+  GitHub is `Subtitles for any video.` in the help.
 - **Version:** `-V` and `--version` print exactly `<name> <version>`, such as
   `dbird 1.3.0`, and exit 0. A tool with subcommands also takes `version`. `-v`
   is left for `--verbose`.
@@ -156,7 +158,8 @@ current. Windows can't replace a running program, so there `update` starts
 
 Every release PR checks a published tool's behavior against these rules, on
 all six platforms, with its real binary: `-h`, `--help` and `help` print the
-same help to stdout; `-V`, `--version` and `version` print exactly
+same help to stdout, using the repo's description as a sentence; `-V`,
+`--version` and `version` print exactly
 `<name> <version>`; an unknown option exits 2 with a message on stderr only;
 `update --help` and `upgrade --help` show the same command; and a bare run with
 no terminal and no credentials exits 0, as WinGet's validation does. None of it

@@ -192,6 +192,9 @@ jobs:
         run: python "$PLAYBOOK/bin/playbook" ci build --target "${{ matrix.target }}" --version "${{ needs.plan.outputs.version }}" --out dist
       - name: Smoke-test the archive
         shell: bash
+        env:
+          # gh reads the repo's description, which the help must use.
+          GH_TOKEN: ${{ github.token }}
         run: python "$PLAYBOOK/bin/playbook" ci smoke --target "${{ matrix.target }}" --version "${{ needs.plan.outputs.version }}" --dist dist
       - name: Smoke-test the installer
         shell: bash

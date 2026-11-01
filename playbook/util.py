@@ -73,6 +73,11 @@ def gh_json(*args: str, cwd: Path | str | None = None) -> Any:
     return json.loads(text) if text else None
 
 
+def sentence(description: str) -> str:
+    """A repo's GitHub description as its help and README write it: a capital first letter and a full stop."""
+    return f"{description[:1].upper()}{description[1:]}."
+
+
 def pr_title(commit: str) -> str:
     """A PR's title: the subject of its commit with a capital first letter."""
     return commit[:1].upper() + commit[1:]

@@ -24,7 +24,7 @@ from pathlib import Path
 
 from .. import stacks
 from ..config import Config, Release
-from ..util import Failure, output, run, say
+from ..util import Failure, gh, output, repository, run, say
 from . import command_line
 
 EXECUTABLE = 0o755
@@ -287,10 +287,18 @@ def check_main_binary(binary: Path, config: Config, version: str) -> None:
         raise Failure(f"{binary.name} reported {reported!r}, without {version}")
     say(f"{binary.name} reports {reported!r}")
 
-    problems = command_line.check(binary, config.name, version)
+    problems = command_line.check(binary, config.name, version, repo_description())
     if problems:
         raise Failure(f"{binary.name} breaks the playbook's command-line rules:\n  - " + "\n  - ".join(problems))
     say(f"{binary.name} follows the command-line rules")
+
+
+def repo_description() -> str:
+    """The repo's GitHub description, which the tool's help must use."""
+    description = gh("api", f"repos/{repository()}", "--jq", ".description")
+    if not description:
+        raise Failure("the repo has no GitHub description for the help to use")
+    return description
 
 
 def _run_binary(command: list[str]) -> str:
