@@ -13,6 +13,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import struct
 import subprocess
 import sys
@@ -31,6 +32,7 @@ from . import command_line
 
 EXECUTABLE = 0o755
 REGULAR = 0o644
+LINK = 0o777
 FROZEN_RUNTIME = Path(__file__).with_name("frozen_runtime.py")
 
 
@@ -66,7 +68,7 @@ def build(root: Path, config: Config, target: str, version: str, out: Path) -> P
         if release.stack == "rust":
             built = _build_rust(root, release, target)
         elif release.stack == "python":
-            built = _build_python(root, release, work / "python")
+            built = _build_python(root, release, version, work / "python")
         else:
             built = _build_dotnet(root, release, target, work / "publish")
 
@@ -81,6 +83,11 @@ def build(root: Path, config: Config, target: str, version: str, out: Path) -> P
             modes[name] = EXECUTABLE
         if stacks.TARGETS[target]["os"] == "macos":
             _seal_macos(stage, list(modes))
+        for folder in stacks.runtime_folders(release, version):
+            if not (built / folder).is_dir():
+                raise Failure(f"the build didn't produce {folder} (looked in {built})")
+            shutil.copytree(built / folder, stage / folder, symlinks=True)
+            modes |= _modes_inside(stage, folder)
         for file in release.files:
             source = root / file
             if not source.is_file():
@@ -101,6 +108,18 @@ def build(root: Path, config: Config, target: str, version: str, out: Path) -> P
         write_archive(stage, modes, archive, source_date(root))
     say(f"packaged {archive}")
     return archive
+
+
+def _modes_inside(stage: Path, folder: str) -> dict[str, int]:
+    """The archive mode of each file and link in a folder of the stage."""
+    modes = {}
+    for path in (stage / folder).rglob("*"):
+        name = path.relative_to(stage).as_posix()
+        if path.is_symlink():
+            modes[name] = LINK
+        elif path.is_file():
+            modes[name] = EXECUTABLE if path.stat().st_mode & stat.S_IXUSR else REGULAR
+    return modes
 
 
 def _build_rust(root: Path, release: Release, target: str) -> Path:
@@ -153,14 +172,16 @@ def _build_dotnet(root: Path, release: Release, target: str, publish: Path) -> P
     return publish
 
 
-def _build_python(root: Path, release: Release, work: Path) -> Path:
-    """One standalone program per binary, each holding Python and the project.
+def _build_python(root: Path, release: Release, version: str, work: Path) -> Path:
+    """One standalone program per binary, each holding the project.
 
-    Each is a single file that unpacks itself when it starts, because the
-    archives, the installers, Homebrew and WinGet all expect a single program.
-    The bundler is installed beside the project in a throwaway environment, so
-    it's never a dependency of the project, and it collects whatever that
-    environment holds, so the project's own dependencies come along.
+    Python and its libraries go in a folder beside the program, not inside it. A
+    single file would unpack them into a new temporary folder on every start,
+    and macOS checks each new file, which costs seconds every time; files that
+    stay put are checked once. The bundler is installed beside the project in a
+    throwaway environment, so it's never a dependency of the project, and it
+    collects whatever that environment holds, so the project's own dependencies
+    come along.
     """
     entries = stacks.python_entry_points(root, release)
     environment = work / "environment"
@@ -178,7 +199,9 @@ def _build_python(root: Path, release: Release, work: Path) -> Path:
             str(root / release.dir),
         ]
     )
-    built = work / "dist"
+    bundled = work / "dist"
+    built = work / "built"
+    built.mkdir()
     for binary, (module, function) in entries.items():
         script = work / f"start_{binary.replace('-', '_')}.py"
         script.write_text(f"import sys\n\nimport {module}\n\nsys.exit({module}.{function}())\n", encoding="utf-8")
@@ -188,7 +211,9 @@ def _build_python(root: Path, release: Release, work: Path) -> Path:
                 str(python),
                 "-m",
                 "PyInstaller",
-                "--onefile",
+                "--onedir",
+                "--contents-directory",
+                stacks.python_runtime(binary, version),
                 "--noconfirm",
                 # Packed programs look like malware to antivirus scanners.
                 "--noupx",
@@ -197,7 +222,7 @@ def _build_python(root: Path, release: Release, work: Path) -> Path:
                 "--name",
                 binary,
                 "--distpath",
-                str(built),
+                str(bundled),
                 "--workpath",
                 str(work / "build" / binary),
                 "--specpath",
@@ -214,6 +239,8 @@ def _build_python(root: Path, release: Release, work: Path) -> Path:
             cwd=work,
             env=_build_variables(release),
         )
+        for item in (bundled / binary).iterdir():
+            shutil.move(item, built / item.name)
     return built
 
 
@@ -331,11 +358,13 @@ def write_archive(stage: Path, modes: dict[str, int], archive: Path, mtime: int)
     if archive.name.endswith(".zip"):
         with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as bundle:
             for name in names:
+                path = stage / name
+                link = path.is_symlink()
                 info = zipfile.ZipInfo(name, date_time=time.gmtime(mtime)[:6])
                 info.create_system = 3  # Unix, so unzip and Homebrew honour the mode
-                info.external_attr = (0o100000 | modes[name]) << 16
+                info.external_attr = ((stat.S_IFLNK if link else stat.S_IFREG) | modes[name]) << 16
                 info.compress_type = zipfile.ZIP_DEFLATED
-                bundle.writestr(info, (stage / name).read_bytes())
+                bundle.writestr(info, os.readlink(path) if link else path.read_bytes())
     else:
         with (
             open(archive, "wb") as raw,
@@ -343,14 +372,20 @@ def write_archive(stage: Path, modes: dict[str, int], archive: Path, mtime: int)
             tarfile.open(fileobj=compressed, mode="w") as bundle,
         ):
             for name in names:
+                path = stage / name
                 info = tarfile.TarInfo(name)
-                info.size = (stage / name).stat().st_size
                 info.mode = modes[name]
                 info.mtime = mtime
                 info.uid = info.gid = 0
                 info.uname = info.gname = ""
-                with open(stage / name, "rb") as handle:
-                    bundle.addfile(info, handle)
+                if path.is_symlink():
+                    info.type = tarfile.SYMTYPE
+                    info.linkname = os.readlink(path)
+                    bundle.addfile(info)
+                else:
+                    info.size = path.stat().st_size
+                    with open(path, "rb") as handle:
+                        bundle.addfile(info, handle)
 
 
 def extract(archive: Path, destination: Path) -> None:
@@ -358,10 +393,15 @@ def extract(archive: Path, destination: Path) -> None:
     if archive.name.endswith(".zip"):
         with zipfile.ZipFile(archive) as bundle:
             for info in bundle.infolist():
+                mode = info.external_attr >> 16
+                if stat.S_ISLNK(mode):
+                    link = destination / info.filename
+                    link.parent.mkdir(parents=True, exist_ok=True)
+                    link.symlink_to(bundle.read(info).decode("utf-8"))
+                    continue
                 path = bundle.extract(info, destination)
-                mode = (info.external_attr >> 16) & 0o777
-                if mode:
-                    os.chmod(path, mode)
+                if mode & 0o777:
+                    os.chmod(path, mode & 0o777)
     else:
         with tarfile.open(archive) as bundle:
             bundle.extractall(destination, filter="data")
@@ -382,8 +422,10 @@ def smoke(root: Path, config: Config, target: str, version: str, dist: Path) -> 
     with tempfile.TemporaryDirectory(prefix="playbook-smoke-") as temp:
         payload = Path(temp) / "payload"
         extract(archive, payload)
-        actual = sorted(p.relative_to(payload).as_posix() for p in payload.rglob("*") if p.is_file())
-        expected = expected_files(release, target)
+        # A runtime folder's contents depend on the tool; running the program
+        # below is what proves they're right.
+        actual = sorted({p.relative_to(payload).parts[0] for p in payload.rglob("*") if p.is_file()})
+        expected = sorted(expected_files(release, target) + stacks.runtime_folders(release, version))
         if actual != expected:
             raise Failure(f"{archive.name} holds the wrong files\n  expected: {expected}\n  actual:   {actual}")
         binaries = [payload / name for name in executable_names(release, target)]
@@ -391,6 +433,8 @@ def smoke(root: Path, config: Config, target: str, version: str, dist: Path) -> 
             check_binary(binary, target)
         say(f"{archive.name}: files, CPU and linking are right")
         check_main_binary(binaries[0], config, version)
+        if stacks.runtime_folders(release, version):
+            check_found_through_a_link(binaries[0], config, version, Path(temp) / "links")
 
         groups = ["all"] + (["unix"] if os_name != "windows" else []) + [os_name]
         for group in groups:
@@ -422,6 +466,22 @@ def check_main_binary(binary: Path, config: Config, version: str) -> None:
     if problems:
         raise Failure(f"{binary.name} breaks the playbook's command-line rules:\n  - " + "\n  - ".join(problems))
     say(f"{binary.name} follows the command-line rules")
+
+
+def check_found_through_a_link(binary: Path, config: Config, version: str, links: Path) -> None:
+    """A program started through a link in another folder still finds its runtime.
+
+    That's how Homebrew and WinGet start it: both put a link on the PATH.
+    """
+    release = config.release
+    assert release is not None
+    links.mkdir()
+    link = links / binary.name
+    link.symlink_to(binary)
+    reported = _run_binary([str(link), *release.version_command])
+    if version not in reported:
+        raise Failure(f"{binary.name} reported {reported!r} through a link, without {version}")
+    say(f"{binary.name} finds its runtime through a link")
 
 
 def repo_description() -> str:

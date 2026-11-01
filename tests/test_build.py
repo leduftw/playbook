@@ -63,6 +63,27 @@ class ArchiveTest(unittest.TestCase):
                 write_archive(self.stage, self.modes, second, 1_700_000_000)
                 self.assertEqual(first.read_bytes(), second.read_bytes())
 
+    @unittest.skipIf(os.name == "nt", "a build made on Windows has no links")
+    def test_a_runtime_folder_keeps_its_links_and_modes(self):
+        runtime = self.stage / "tool-runtime-1.0.0"
+        versions = runtime / "Python.framework" / "Versions"
+        (versions / "3.14").mkdir(parents=True)
+        (versions / "3.14" / "Python").write_bytes(b"a library")
+        (versions / "3.14" / "Python").chmod(0o755)
+        (runtime / "notes.txt").write_text("notes\n")
+        (runtime / "Python").symlink_to("Python.framework/Versions/3.14/Python")
+        (versions / "Current").symlink_to("3.14")
+        self.modes |= build._modes_inside(self.stage, runtime.name)
+        for name in ("tool-macos-arm64.zip", "tool-linux-x64.tar.gz"):
+            with self.subTest(name=name):
+                _, out = self.roundtrip(name)
+                folder = out / runtime.name
+                self.assertEqual(os.readlink(folder / "Python"), "Python.framework/Versions/3.14/Python")
+                self.assertEqual((folder / "Python").read_bytes(), b"a library")
+                self.assertEqual(os.readlink(folder / "Python.framework" / "Versions" / "Current"), "3.14")
+                self.assertTrue(os.access(folder / "Python.framework" / "Versions" / "3.14" / "Python", os.X_OK))
+                self.assertFalse(os.access(folder / "notes.txt", os.X_OK))
+
     @unittest.skipIf(os.name == "nt", "the fake tool is a script with a shebang")
     def test_smoke_rejects_an_archived_tool_that_breaks_the_command_line_rules(self):
         cfg = config(DBIRD)
@@ -79,6 +100,70 @@ class ArchiveTest(unittest.TestCase):
             self.assertRaisesRegex(Failure, r"`tool --not-an-option-of-this-tool` exited 1, not 2"),
         ):
             smoke(self.work, cfg, "linux-x64", "1.2.3", self.work)
+
+    def python_archive(self, *folders):
+        """A subtitler archive with the right files, and these folders beside them."""
+        cfg = config(SUBTITLER)
+        modes = dict.fromkeys(expected_files(cfg.release, "linux-x64"), REGULAR)
+        for name in modes:
+            (self.stage / name).write_text(name)
+        for folder in folders:
+            (self.stage / folder).mkdir()
+            (self.stage / folder / "library").write_text("a library")
+            modes[f"{folder}/library"] = REGULAR
+        write_archive(self.stage, modes, self.work / "subtitler-linux-x64.tar.gz", 1_700_000_000)
+        return cfg
+
+    def test_smoke_runs_a_python_program_through_a_link_too(self):
+        cfg = self.python_archive("subtitler-runtime-1.2.3")
+        with (
+            mock.patch("playbook.ci.build.check_binary"),
+            mock.patch("playbook.ci.build.check_main_binary"),
+            mock.patch("playbook.ci.build.check_found_through_a_link") as check,
+        ):
+            smoke(self.work, cfg, "linux-x64", "1.2.3", self.work)
+        check.assert_called_once()
+
+    def test_smoke_refuses_a_python_archive_without_its_runtime(self):
+        cfg = self.python_archive()
+        with self.assertRaisesRegex(Failure, "holds the wrong files"):
+            smoke(self.work, cfg, "linux-x64", "1.2.3", self.work)
+
+    def test_smoke_refuses_a_python_archive_with_another_versions_runtime(self):
+        cfg = self.python_archive("subtitler-runtime-1.2.2")
+        with self.assertRaisesRegex(Failure, "holds the wrong files"):
+            smoke(self.work, cfg, "linux-x64", "1.2.3", self.work)
+
+    def test_smoke_still_refuses_a_stray_folder_in_a_flat_archive(self):
+        cfg = config(DBIRD)
+        cfg.release.files = ["README.md"]
+        cfg.name = "tool"
+        cfg.release.binaries = ["tool"]
+        (self.stage / "stray").mkdir()
+        (self.stage / "stray" / "file").write_text("left over")
+        self.modes["stray/file"] = REGULAR
+        write_archive(self.stage, self.modes, self.work / "tool-linux-x64.tar.gz", 1_700_000_000)
+        with self.assertRaisesRegex(Failure, "holds the wrong files"):
+            smoke(self.work, cfg, "linux-x64", "1.2.3", self.work)
+
+    @unittest.skipIf(os.name == "nt", "the fake tool is a script with a shebang")
+    def test_a_program_that_only_works_from_its_own_folder_is_refused(self):
+        cfg = config(SUBTITLER)
+        tool = self.stage / "subtitler"
+        tool.write_text('#!/bin/sh\ncat "$(dirname "$0")/runtime"\n')
+        tool.chmod(0o755)
+        (self.stage / "runtime").write_text("subtitler 1.2.3\n")
+        with self.assertRaisesRegex(Failure, "exited 1"):
+            build.check_found_through_a_link(tool, cfg, "1.2.3", self.work / "links")
+
+    @unittest.skipIf(os.name == "nt", "the fake tool is a script with a shebang")
+    def test_a_program_that_finds_itself_through_a_link_passes(self):
+        cfg = config(SUBTITLER)
+        tool = self.stage / "subtitler"
+        tool.write_text(f'#!/bin/sh\ncat "{self.stage}/runtime"\n')
+        tool.chmod(0o755)
+        (self.stage / "runtime").write_text("subtitler 1.2.3\n")
+        build.check_found_through_a_link(tool, cfg, "1.2.3", self.work / "links")
 
     def test_a_repo_needs_a_description_for_its_help_to_use(self):
         with (
@@ -141,8 +226,14 @@ class BuildPythonTest(unittest.TestCase):
         self.release = config(SUBTITLER).release
 
     def build(self):
-        with mock.patch.object(build, "run") as run:
-            built = build._build_python(self.root, self.release, self.work)
+        def bundle(command, **_):
+            if "PyInstaller" in command:
+                folder = Path(command[command.index("--distpath") + 1]) / command[command.index("--name") + 1]
+                (folder / command[command.index("--contents-directory") + 1]).mkdir(parents=True)
+                (folder / "subtitler").write_text("a built program")
+
+        with mock.patch.object(build, "run", side_effect=bundle) as run:
+            built = build._build_python(self.root, self.release, "1.2.3", self.work)
         return built, [call.args[0] for call in run.call_args_list]
 
     def bundler(self):
@@ -157,12 +248,21 @@ class BuildPythonTest(unittest.TestCase):
         self.assertIn(stacks.PYINSTALLER, install)
         self.assertIn(str(self.root), install)
 
-    def test_it_makes_one_file_with_the_runtime_hook(self):
+    def test_it_makes_a_program_with_the_runtime_hook(self):
         command = self.bundler()
-        self.assertIn("--onefile", command)
         self.assertEqual(command[command.index("--name") + 1], "subtitler")
         hook = Path(command[command.index("--runtime-hook") + 1])
         self.assertTrue(hook.is_file(), hook)
+
+    def test_it_keeps_python_in_a_folder_named_for_the_tool_and_version(self):
+        command = self.bundler()
+        self.assertIn("--onedir", command)
+        self.assertNotIn("--onefile", command)
+        self.assertEqual(command[command.index("--contents-directory") + 1], "subtitler-runtime-1.2.3")
+
+    def test_the_program_and_its_folder_end_up_side_by_side(self):
+        built, _ = self.build()
+        self.assertEqual(sorted(p.name for p in built.iterdir()), ["subtitler", "subtitler-runtime-1.2.3"])
 
     def test_it_keeps_what_the_bundler_cant_see(self):
         command = self.bundler()
@@ -176,7 +276,7 @@ class BuildPythonTest(unittest.TestCase):
     def test_a_missing_entry_point_stops_before_installing_anything(self):
         (self.root / "pyproject.toml").write_text('[project]\nname = "x"\nversion = "1.0.0"\n')
         with mock.patch.object(build, "run") as run, self.assertRaises(ConfigError):
-            build._build_python(self.root, self.release, self.work)
+            build._build_python(self.root, self.release, "1.2.3", self.work)
         run.assert_not_called()
 
     def test_the_licence_comes_from_the_python_in_use(self):
@@ -188,6 +288,8 @@ class BuildPythonTest(unittest.TestCase):
         for name in self.release.files:
             (self.root / name).write_text(name)
         (self.work / "subtitler").write_text("a built program")
+        (self.work / "subtitler-runtime-1.2.3").mkdir()
+        (self.work / "subtitler-runtime-1.2.3" / "library").write_text("a library")
         licence = self.root / "python-licence"
         licence.write_text("Python's licence")
         with (
@@ -199,9 +301,21 @@ class BuildPythonTest(unittest.TestCase):
             archive = build.build(self.root, config(SUBTITLER), "linux-x64", "1.2.3", self.work / "archives")
         payload = self.work / "payload"
         extract(archive, payload)
-        self.assertEqual(sorted(p.name for p in payload.iterdir()), expected_files(self.release, "linux-x64"))
+        self.assertEqual(
+            sorted(p.name for p in payload.iterdir()),
+            sorted([*expected_files(self.release, "linux-x64"), "subtitler-runtime-1.2.3"]),
+        )
+        self.assertEqual((payload / "subtitler-runtime-1.2.3" / "library").read_text(), "a library")
         self.assertEqual((payload / "PYTHON-LICENSE.txt").read_text(), "Python's licence")
         self.assertEqual((payload / "PYTHON-THIRD-PARTY-NOTICES.txt").read_text(), "third-party licences")
+
+    def test_a_build_without_its_runtime_stops_before_packaging(self):
+        (self.work / "subtitler").write_text("a built program")
+        with (
+            mock.patch.object(build, "_build_python", return_value=self.work),
+            self.assertRaisesRegex(Failure, "didn't produce subtitler-runtime-1.2.3"),
+        ):
+            build.build(self.root, config(SUBTITLER), "linux-x64", "1.2.3", self.work / "archives")
 
 
 class PythonThirdPartyNoticesTest(unittest.TestCase):

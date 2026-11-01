@@ -71,8 +71,11 @@ and [subtitler](https://github.com/leduftw/subtitler).
   packages and held to the same checks as the main binary. A Python tool is
   bundled into a standalone program for each platform with PyInstaller, which
   runs only on the build machine, so nobody needs Python to run it and it gets
-  every check above. Its archives carry Python's licence and notices for its
-  bundled libraries. Its PyPI wheel is built once, checked with `twine`,
+  every check above. The program keeps Python and its libraries in a
+  `<name>-runtime-<version>` folder beside it, which every channel installs with
+  it, and it's also run through a link, the way Homebrew and WinGet start it. Its
+  archives carry Python's licence and notices for its bundled libraries. Its
+  PyPI wheel is built once, checked with `twine`,
   installed with `uv tool install` and held to the same checks.
 - **Merging it publishes:** a draft release gets every file, `SHA256SUMS` and a
   signed provenance record, then is published, which creates the tag. Releases
