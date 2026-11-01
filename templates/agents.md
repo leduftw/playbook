@@ -28,13 +28,13 @@ Sessions that don't change this repo's files (reading, planning, answering quest
 
 A command-line tool here follows the [Command Line Interface Guidelines](https://clig.dev) and the playbook's [rules for command-line tools](https://github.com/leduftw/playbook#how-command-line-tools-behave), in short:
 
-- `-h`/`--help` print the help, which describes the tool with the repo's GitHub description, and `-V`/`--version` print exactly `<name> <version>`, both to stdout with exit 0. A tool with subcommands also takes `help [<command>]` and `version`.
+- `-h`/`--help` print the help, which describes the tool with the repo's GitHub description, and `-V`/`--version` print exactly `<name> <version>`, both to stdout with exit 0. Every tool also takes `help [<command>]` and `version`, even one whose arguments are data: `./help` reaches a file with that name.
 - A wrong command, option or value prints a message to stderr and exits 2. A command that ran and failed exits 1.
 - Started with no arguments at all, the tool does its default job. If something that job needs isn't set up yet (a token, a terminal), it prints the help plus one line saying what's missing, and exits 0. An explicit command still fails when its requirements are missing; an existing config that can't be read is an error either way.
 - Help uses the colors of Python 3.14's `argparse`, only in a terminal, and none with `NO_COLOR`, `TERM=dumb` or `--no-color`.
 - Arguments are parsed by the language's standard parser (`argparse`, `clap`, `System.CommandLine`), never by hand.
 @@#published@@
-- `update` (alias `upgrade`) moves to the latest release through whatever installed the tool: `brew upgrade`, `winget upgrade`, `cargo install`, `dotnet tool update`, or the release's own installer.
+- `update` (alias `upgrade`) moves to the latest release through whatever installed the tool: `brew upgrade`, `winget upgrade`, `cargo install`, `dotnet tool update`, `uv tool upgrade`, `pipx upgrade`, `pip install --upgrade`, or the release's own installer.
 - Every release PR checks these rules against the real binaries on all six platforms, so a release that breaks them doesn't ship.
 @@/published@@
 

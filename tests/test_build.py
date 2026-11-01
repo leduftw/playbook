@@ -5,9 +5,12 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from playbook import stacks
+from playbook.ci import build
 from playbook.ci.build import EXECUTABLE, REGULAR, check_binary, expected_files, extract, smoke, write_archive
+from playbook.config import ConfigError
 from playbook.util import Failure
-from tests.fixtures import DBIRD, MONAD, config
+from tests.fixtures import DBIRD, MONAD, PYPROJECT, SUBTITLER, config
 from tests.test_command_line import TOOL
 
 
@@ -96,6 +99,68 @@ class ExpectedFilesTest(unittest.TestCase):
 
     def test_rust_archives_hold_binary_licence_and_readme(self):
         self.assertEqual(expected_files(config(DBIRD).release, "linux-x64"), ["LICENSE", "README.md", "dbird"])
+
+    def test_python_archives_also_hold_the_licence_of_the_python_inside(self):
+        subtitler = config(SUBTITLER).release
+        self.assertEqual(
+            expected_files(subtitler, "windows-arm64"), ["LICENSE", "PYTHON-LICENSE.txt", "README.md", "subtitler.exe"]
+        )
+
+
+class BuildPythonTest(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name) / "repo"
+        self.root.mkdir()
+        (self.root / "pyproject.toml").write_text(PYPROJECT)
+        self.work = Path(self.temp.name) / "work"
+        self.work.mkdir()
+        self.release = config(SUBTITLER).release
+
+    def build(self):
+        with mock.patch.object(build, "run") as run:
+            built = build._build_python(self.root, self.release, self.work)
+        return built, [call.args[0] for call in run.call_args_list]
+
+    def bundler(self):
+        return self.build()[1][-1]
+
+    def test_the_bundler_is_pinned_and_only_in_a_throwaway_environment(self):
+        _, commands = self.build()
+        self.assertEqual(commands[0], [sys.executable, "-m", "venv", str(self.work / "environment")])
+        install = commands[1]
+        self.assertIn("environment", install[0])
+        self.assertRegex(stacks.PYINSTALLER, r"^pyinstaller==\d+\.\d+\.\d+$")
+        self.assertIn(stacks.PYINSTALLER, install)
+        self.assertIn(str(self.root), install)
+
+    def test_it_makes_one_file_with_the_runtime_hook(self):
+        command = self.bundler()
+        self.assertIn("--onefile", command)
+        self.assertEqual(command[command.index("--name") + 1], "subtitler")
+        hook = Path(command[command.index("--runtime-hook") + 1])
+        self.assertTrue(hook.is_file(), hook)
+
+    def test_it_keeps_what_the_bundler_cant_see(self):
+        command = self.bundler()
+        self.assertEqual(command[command.index("--collect-submodules") + 1], "subtitler")
+        self.assertEqual(command[command.index("--collect-data") + 1], "subtitler")
+
+    def test_the_program_starts_the_scripts_entry_point_and_passes_on_its_exit_code(self):
+        script = Path(self.bundler()[-1])
+        self.assertEqual(script.read_text(), "import sys\n\nimport subtitler.cli\n\nsys.exit(subtitler.cli.main())\n")
+
+    def test_a_missing_entry_point_stops_before_installing_anything(self):
+        (self.root / "pyproject.toml").write_text('[project]\nname = "x"\nversion = "1.0.0"\n')
+        with mock.patch.object(build, "run") as run, self.assertRaises(ConfigError):
+            build._build_python(self.root, self.release, self.work)
+        run.assert_not_called()
+
+    def test_the_licence_comes_from_the_python_in_use(self):
+        notices = build._python_notices()
+        self.assertEqual(list(notices.values()), ["PYTHON-LICENSE.txt"])
+        self.assertIn("PYTHON SOFTWARE FOUNDATION LICENSE", next(iter(notices)).read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

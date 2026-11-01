@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 
 from playbook import ROOT, major_ref, render
-from tests.fixtures import DBIRD, LOCAL, MONAD, config
+from tests.fixtures import DBIRD, LOCAL, MONAD, SUBTITLER, config
 
 
 class ManagedFilesTest(unittest.TestCase):
@@ -76,12 +76,22 @@ class ManagedFilesTest(unittest.TestCase):
         self.assertIn(f"leduftw/playbook/.github/actions/registry@{major_ref()}", workflow)
         self.assertIn(".github/release.yml", files)
 
-    def test_nuget_uploads_run_on_a_mac_and_crates_io_on_linux(self):
-        for repo, runner in ((MONAD, "macos-15"), (DBIRD, "ubuntu-24.04")):
+    def test_nuget_uploads_run_on_a_mac_and_the_others_on_linux(self):
+        for repo, runner in ((MONAD, "macos-15"), (DBIRD, "ubuntu-24.04"), (SUBTITLER, "ubuntu-24.04")):
             with self.subTest(runner=runner):
                 workflow = render.managed_files(self.root, config(repo))[".github/workflows/playbook.yml"]
                 job = workflow.split("\n  registry:", 1)[1]
                 self.assertIn(f"runs-on: {runner}", job)
+
+    def test_the_jobs_that_build_python_have_what_they_need(self):
+        pipeline = (ROOT / ".github" / "workflows" / "pipeline.yml").read_text()
+        build = pipeline.split("\n  build:", 1)[1].split("\n  homebrew-dry-run:", 1)[0]
+        self.assertIn("if: matrix.stack == 'python'", build)
+        self.assertLess(build.index("Set up the Python to bundle"), build.index("Build and package"))
+        channels = pipeline.split("\n  channels-dry-run:", 1)[1].split("\n  checks:", 1)[0]
+        self.assertIn("if: needs.plan.outputs.registry == 'pypi'", channels)
+        action = (ROOT / ".github" / "actions" / "registry" / "action.yml").read_text()
+        self.assertIn("if: steps.settings.outputs.registry == 'pypi'", action)
 
     def test_the_channels_dry_run_packs_where_the_upload_will(self):
         pipeline = (ROOT / ".github" / "workflows" / "pipeline.yml").read_text()
@@ -135,6 +145,16 @@ class AgentsTest(unittest.TestCase):
         self.assertIn("### Releasing", section)
         self.assertIn("the Homebrew tap, WinGet, the one-line installers and NuGet", section)
         self.assertNotIn("### Publishing", section)
+
+    def test_python_channels_are_named(self):
+        section = render.agents_section(config(SUBTITLER))
+        self.assertIn("the Homebrew tap, WinGet, the one-line installers and PyPI", section)
+        self.assertIn("`uv tool upgrade`", section)
+
+    def test_no_tool_is_excused_from_the_help_and_version_words(self):
+        section = render.agents_section(config(LOCAL))
+        self.assertIn("Every tool also takes `help [<command>]` and `version`", section)
+        self.assertIn("`./help` reaches a file with that name", section)
 
     def test_local_section_says_nothing_is_released(self):
         section = render.agents_section(config(LOCAL))

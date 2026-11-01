@@ -50,8 +50,8 @@ def render(config: Config, version: str, repo: str, urls: dict[str, str], digest
         lines += ["", f"  {block} do"]
         if os_name == "macos" and release.macos_minimum:
             lines.append(f"    depends_on macos: :{MACOS_NAMES[macos_major(release.macos_minimum)]}")
-        if os_name == "linux":
-            lines += [f"    depends_on {_ruby(dep)}" for dep in release.homebrew.linux_dependencies]
+        dependencies = {"macos": release.homebrew.macos_dependencies, "linux": release.homebrew.linux_dependencies}
+        lines += [f"    depends_on {_ruby(dep)}" for dep in dependencies[os_name]]
         if len(present) == 2:
             lines += [
                 "    if Hardware::CPU.arm?",

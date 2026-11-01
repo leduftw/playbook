@@ -4,7 +4,7 @@ from pathlib import Path
 
 from playbook import stacks
 from playbook.config import Check, ConfigError
-from tests.fixtures import DBIRD, MONAD, config
+from tests.fixtures import DBIRD, MONAD, PYPROJECT, SUBTITLER, config
 
 CARGO_TOML = """[package]
 name = "dbird"
@@ -70,6 +70,79 @@ class VersionTest(unittest.TestCase):
         self.assertEqual(stacks.read_version(self.root, release), "2.0.1")
         stacks.write_version(self.root, release, "2.0.2")
         self.assertIn("<Version>2.0.2</Version>", project.read_text())
+
+
+class PythonVersionTest(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.release = config(SUBTITLER).release
+        self.pyproject = self.root / "pyproject.toml"
+        self.pyproject.write_text(PYPROJECT)
+
+    def package(self, version_line: str, layout: str = "src/subtitler") -> Path:
+        (self.root / layout).mkdir(parents=True)
+        module = self.root / layout / "__init__.py"
+        module.write_text(f'"""A package."""\n\n{version_line}\n')
+        return module
+
+    def test_the_version_lives_in_pyproject(self):
+        self.assertEqual(stacks.read_version(self.root, self.release), "1.2.3")
+        changed = stacks.write_version(self.root, self.release, "1.2.4")
+        self.assertEqual(changed, [self.pyproject])
+        self.assertIn('version = "1.2.4"', self.pyproject.read_text())
+        self.assertIn('name = "leduftw-subtitler"', self.pyproject.read_text())
+
+    def test_a_release_moves_the_packages_own_version_too(self):
+        for layout in ("src/subtitler", "subtitler"):
+            with self.subTest(layout=layout):
+                self.pyproject.write_text(PYPROJECT)
+                module = self.package('__version__ = "1.2.3"', layout)
+                self.assertEqual(stacks.version_files(self.root, self.release), [self.pyproject, module])
+                changed = stacks.write_version(self.root, self.release, "2.0.0")
+                self.assertEqual(changed, [self.pyproject, module])
+                self.assertIn('__version__ = "2.0.0"', module.read_text())
+                self.assertEqual(stacks.read_version(self.root, self.release), "2.0.0")
+                module.unlink()
+                module.parent.rmdir()
+
+    def test_two_versions_that_disagree_are_refused(self):
+        self.package('__version__ = "9.9.9"')
+        with self.assertRaises(ConfigError) as caught:
+            stacks.read_version(self.root, self.release)
+        self.assertIn("says 9.9.9", str(caught.exception))
+        self.assertIn("says 1.2.3", str(caught.exception))
+
+    def test_a_computed_version_is_left_alone(self):
+        module = self.package('__version__ = importlib.metadata.version("x")')
+        self.assertEqual(stacks.version_files(self.root, self.release), [self.pyproject])
+        self.assertEqual(stacks.read_version(self.root, self.release), "1.2.3")
+        self.assertIn("importlib", module.read_text())
+
+    def test_no_pyproject_is_a_clear_error(self):
+        self.pyproject.unlink()
+        with self.assertRaises(ConfigError) as caught:
+            stacks.read_version(self.root, self.release)
+        self.assertIn("no pyproject.toml", str(caught.exception))
+
+
+class PythonEntryPointTest(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.release = config(SUBTITLER).release
+
+    def test_each_binary_comes_from_project_scripts(self):
+        (self.root / "pyproject.toml").write_text(PYPROJECT)
+        self.assertEqual(stacks.python_entry_points(self.root, self.release), {"subtitler": ("subtitler.cli", "main")})
+
+    def test_a_binary_without_a_script_is_a_clear_error(self):
+        (self.root / "pyproject.toml").write_text('[project]\nname = "x"\nversion = "1.0.0"\n')
+        with self.assertRaises(ConfigError) as caught:
+            stacks.python_entry_points(self.root, self.release)
+        self.assertIn('subtitler = "<module>:<function>"', str(caught.exception))
 
 
 class CheckCommandsTest(unittest.TestCase):

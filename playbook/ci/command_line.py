@@ -74,6 +74,10 @@ def check(binary: Path, name: str, version: str, timeout: float = 60) -> list[st
         updates = [run(form, "--help", code=0) for form in ("update", "upgrade")]
         if updates[0] != updates[1]:
             problems.append(f"`{name} upgrade` isn't the same command as `{name} update`")
+        # A tool without the command can pass the checks above by accident, when
+        # its parser reads the word as data and answers --help for the whole tool.
+        if updates[0] == helps["--help"]:
+            problems.append(f"`{name} update --help` prints the tool's own help, so it has no `update` command")
 
         # WinGet's validation starts the program this way: no arguments, no
         # terminal, no credentials. Something it can't do yet isn't a failure.

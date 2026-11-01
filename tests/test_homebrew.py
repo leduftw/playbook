@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 
 from playbook.ci.homebrew import class_name, render
-from tests.fixtures import DBIRD, MONAD, config
+from tests.fixtures import DBIRD, MONAD, SUBTITLER, config
 
 TARGETS = ("macos-arm64", "macos-x64", "linux-x64", "linux-arm64")
 
@@ -40,10 +40,22 @@ class FormulaTest(unittest.TestCase):
         self.assertIn('pkgshare.install "monad.example.json"', text)
         self.assertIn('shell_output("#{bin}/monad version")', text)
 
+    def test_dependencies_can_be_declared_per_system(self):
+        text = render(config(SUBTITLER), "1.0.0", "leduftw/subtitler", urls("subtitler"), DIGESTS)
+        macos = text.split("on_macos do", 1)[1].split("on_linux do", 1)[0]
+        linux = text.split("on_linux do", 1)[1].split("def install", 1)[0]
+        self.assertIn('depends_on "ffmpeg"', macos)
+        self.assertIn('depends_on "ffmpeg"', linux)
+
+    def test_a_linux_dependency_stays_off_macos(self):
+        text = render(config(MONAD), "2.0.2", "leduftw/monad", urls("monad"), DIGESTS)
+        macos = text.split("on_macos do", 1)[1].split("on_linux do", 1)[0]
+        self.assertNotIn("pulseaudio", macos)
+
     @unittest.skipUnless(shutil.which("ruby"), "Ruby isn't installed")
     def test_formulae_are_valid_ruby(self):
         with tempfile.TemporaryDirectory() as temp:
-            for fixture, name in ((DBIRD, "dbird"), (MONAD, "monad")):
+            for fixture, name in ((DBIRD, "dbird"), (MONAD, "monad"), (SUBTITLER, "subtitler")):
                 path = Path(temp) / f"{name}.rb"
                 path.write_text(render(config(fixture), "1.0.0", f"leduftw/{name}", urls(name), DIGESTS))
                 subprocess.run(["ruby", "-c", str(path)], check=True, capture_output=True)

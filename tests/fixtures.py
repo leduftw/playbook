@@ -66,6 +66,32 @@ notes = ["Set AUDD_API_TOKEN, then run: monad"]
 linux-notes = ["Linux capture also needs parec (pulseaudio-utils) or ffmpeg."]
 """
 
+SUBTITLER = """
+name = "subtitler"
+published = true
+
+[[check]]
+stack = "python"
+
+[release]
+stack = "python"
+channels = ["homebrew", "winget", "installers", "pypi"]
+
+[release.homebrew]
+desc = "Subtitles for any video, in any language"
+macos-dependencies = ["ffmpeg"]
+linux-dependencies = ["ffmpeg"]
+"""
+
+PYPROJECT = """
+[project]
+name = "leduftw-subtitler"
+version = "1.2.3"
+
+[project.scripts]
+subtitler = "subtitler.cli:main"
+"""
+
 LOCAL = """
 name = "media-library"
 

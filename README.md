@@ -38,7 +38,8 @@ repo what a release contains). Everything else comes from this repo.
 ## What published repos also get
 
 A published repo is one other people install. Today that's
-[dbird](https://github.com/leduftw/dbird) and [monad](https://github.com/leduftw/monad).
+[dbird](https://github.com/leduftw/dbird), [monad](https://github.com/leduftw/monad)
+and [subtitler](https://github.com/leduftw/subtitler).
 
 - **Releasing is one command.** `playbook release patch|minor|major` opens a PR
   that only bumps the version. Nobody types a version number: the first release
@@ -56,7 +57,11 @@ A published repo is one other people install. Today that's
   archive checks. The playbook signs an archive's unsigned macOS binaries
   itself but can't reach inside a package, so a tool's build signs its own
   Mac-only binaries (ad hoc is enough). The tool is then installed from those
-  packages and held to the same checks as the main binary.
+  packages and held to the same checks as the main binary. A Python tool is
+  bundled into a standalone program for each platform with PyInstaller, which
+  runs only on the build machine, so nobody needs Python to run it and it gets
+  every check above. Its PyPI wheel is built once, checked with `twine`,
+  installed with `uv tool install` and held to the same checks.
 - **Merging it publishes:** a draft release gets every file, `SHA256SUMS` and a
   signed provenance record, then is published, which creates the tag. Releases
   are locked once published, so a broken one is fixed by shipping the next
@@ -67,8 +72,8 @@ A published repo is one other people install. Today that's
     `curl -fsSL https://github.com/leduftw/<name>/releases/latest/download/<name>-installer.sh | sh`
     and `irm https://github.com/leduftw/<name>/releases/latest/download/<name>-installer.ps1 | iex`
   - the language registry through trusted publishing, so no registry token is
-    stored anywhere: crates.io (`cargo install <name> --locked`) or NuGet
-    (`dotnet tool install -g <package id>`)
+    stored anywhere: crates.io (`cargo install <name> --locked`), NuGet
+    (`dotnet tool install -g <package id>`) or PyPI (`uv tool install <package>`)
 - **A failed channel is retried without a new release:** once the cause is
   fixed (an expired token, say), `gh workflow run playbook --ref main` updates
   the channels of the latest release from its published files. Each channel
@@ -91,12 +96,11 @@ language. The general approach comes from the
 designing a tool's commands and options. These rules settle what they leave
 open:
 
-- **Help:** `-h` and `--help` print the help to stdout and exit 0. A tool with
-  subcommands also takes `help` and `help <command>`. The help describes the
-  tool with the repo's GitHub description, word for word.
-- **Version:** `-V` and `--version` print exactly `<name> <version>`, such as
-  `dbird 1.3.0`, and exit 0. A tool with subcommands also takes `version`. `-v`
-  is left for `--verbose`.
+- **Help:** `-h`, `--help` and `help` print the help to stdout and exit 0, and
+  `help <command>` shows one command's. The help describes the tool with the
+  repo's GitHub description, word for word.
+- **Version:** `-V`, `--version` and `version` print exactly `<name> <version>`,
+  such as `dbird 1.3.0`, and exit 0. `-v` is left for `--verbose`.
 - **Mistakes:** an unknown command or option, or a missing or wrong value,
   prints a message to stderr and exits 2. A command that ran and failed exits 1.
   That tells a script its own mistake (2: retrying never helps) from a failure
@@ -120,8 +124,8 @@ open:
 - **Words and dashes:** actions are subcommands, without dashes (`update`,
   `run`); settings are options, with dashes (`--mute`, `--token`). Only help and
   version come in both forms. A tool whose arguments are data, such as a file
-  to read, takes no `help` or `version` word, because `subtitler help` must be
-  free to mean a file called `help`.
+  to read, has these words too, so one check covers every tool: `subtitler help`
+  shows the help, and `subtitler ./help` reads a file called `help`.
 - **Parsing:** each language's standard parser, never a hand-written one, so
   the help comes from the same definitions the parser uses: `argparse` in
   Python, `clap` in Rust and `System.CommandLine` in .NET. In .NET the library
@@ -140,21 +144,24 @@ its `Cellar`.
 | WinGet | `\Microsoft\WinGet\` in the path | `winget upgrade --id leduftw.<name>` |
 | crates.io | Cargo's `bin` folder | `cargo install <name> --locked` |
 | NuGet | `.store/<package id>/` in the path | `dotnet tool update --tool-path <folder> <package id>`, for the folder holding that `.store` |
-| A local build | `target/` or `bin/Debug` in the path | nothing: it refuses |
+| PyPI, with uv | `uv-receipt.toml` in the Python environment running it | `uv tool upgrade <package>` |
+| PyPI, with pipx | `pipx_metadata.json` in the Python environment running it | `pipx upgrade <package>` |
+| PyPI, with pip | `site-packages` in the path | `python -m pip install --upgrade <package>`, with the same Python |
+| A local build | `target/` or `bin/Debug` in the path, or Python code that isn't installed | nothing: it refuses |
 | The one-line installer | anywhere else | the release's installer, into the same folder |
 
 If it's already the latest version, `update` says so and exits 0. A release
 reaches WinGet only after Microsoft reviews it, which can take days, and NuGet
-once it has checked and indexed the packages, which takes minutes. When the
-newest version isn't there yet, `update` says that instead of calling itself
-current. Windows can't replace a running program, so there `update` starts
-`winget`, `dotnet tool update` or the installer and exits.
+and PyPI a few minutes after it's published. When the newest version isn't there
+yet, `update` says that instead of calling itself current. Windows can't replace
+a running program, so there `update` starts the update and exits.
 
 Every release PR checks a published tool's behavior against these rules, on
 all six platforms, with its real binary: `-h`, `--help` and `help` print the
 same help to stdout; `-V`, `--version` and `version` print exactly
 `<name> <version>`; an unknown option exits 2 with a message on stderr only;
-`update --help` and `upgrade --help` show the same command; and a bare run with
+`update --help` and `upgrade --help` show the same command, with help of its
+own; and a bare run with
 no terminal and no credentials exits 0, as WinGet's validation does. None of it
 may print color codes, even with `FORCE_COLOR`, `CLICOLOR_FORCE` or
 `PYTHON_COLORS` set, since the output goes to a pipe. The layout of the help is
@@ -211,20 +218,24 @@ playbook new notes --local --private --stack python --description "scripts for m
 It creates the project, the playbook's files, the GitHub repo with its
 settings, and lists what's left for a human. A local repo can be published
 later by adding `published = true` and a `[release]` table to its
-`playbook.toml`. Publishing rules exist for command-line tools in Rust and .NET;
-rules for desktop apps and services get written the first time one ships.
+`playbook.toml`. Publishing rules exist for command-line tools in Rust, .NET and
+Python; rules for desktop apps and services get written the first time one
+ships.
 
 ## One-time steps that need a human
 
 - **GitHub Pro** for private repos: GitHub Free can't protect `main` in a
   private repo, so until then those repos rely on their local hooks.
-- **Registry trusted publishing**, once per published repo: on crates.io or
-  NuGet, add a trusted publisher with repository `leduftw/<name>`, workflow
-  `playbook.yml` and environment `release`.
+- **Registry trusted publishing**, once per published repo: on crates.io, NuGet
+  or PyPI, add a trusted publisher with repository `leduftw/<name>`, workflow
+  `playbook.yml` and environment `release`. PyPI takes this before a package's
+  first upload, as a pending publisher for the name in `pyproject.toml`.
 - **WinGet**: one classic GitHub token with the `public_repo` scope, stored in
   each published repo's release environment
   (`gh secret set WINGET_TOKEN --env release --repo leduftw/<name>`), and a
-  manual first submission of each new package (`wingetcreate new <url>`).
+  manual submission of each new package once its first release is out
+  (`wingetcreate new <url>`). That first release only warns that the package
+  isn't on WinGet yet, and its run prints the exact command.
   WinGet's validation starts the program with no arguments, which the
   [command-line rules](#how-command-line-tools-behave) make exit 0 and every
   release PR checks, so no submission needs a comment explaining how to run it.

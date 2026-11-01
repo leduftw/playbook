@@ -1,8 +1,10 @@
 """WinGet: opening the version-update PR in microsoft/winget-pkgs.
 
-The first version of a package is a one-time manual submission; every later
-release is a PR that WingetCreate opens from the token owner's fork. A missing
-token or a missing package fails the job loudly instead of skipping it.
+The first version of a package is a one-time manual submission, which needs the
+release's files, so a repo's first release can't be on WinGet yet and only says
+so. Every later release is a PR that WingetCreate opens from the token owner's
+fork, and a missing token or a missing package fails the job loudly instead of
+skipping it.
 """
 
 from __future__ import annotations
@@ -16,9 +18,9 @@ import tempfile
 import urllib.request
 from pathlib import Path
 
-from .. import stacks
+from .. import semver, stacks
 from ..config import Config
-from ..util import Failure, gh_json, repository, run, say, warn
+from ..util import Failure, gh_json, repository, run, say, summary, warn
 
 WINGETCREATE_URL = "https://github.com/microsoft/winget-create/releases/download/v1.12.13.0/wingetcreate.exe"
 WINGETCREATE_SHA256 = "24042bd37915805615e6cf969ac57c6439124c3fe85823327f5f3fb24bd9ffea"
@@ -77,13 +79,31 @@ def pull_request(output: str) -> str | None:
     return match.group(0) if match else None
 
 
-def check(config: Config) -> None:
+def first_submission(config: Config, version: str, repo: str) -> str:
+    """What a person does once, after a repo's first release, to put it on WinGet."""
+    release = config.release
+    assert release is not None
+    urls = [
+        f"https://github.com/{repo}/releases/download/v{version}/{stacks.archive_name(config.name, target)}"
+        for target in release.targets
+        if target in ARCHITECTURES
+    ]
+    return (
+        f"{release.winget.id} isn't in winget-pkgs yet, and its first version is a one-time manual submission: "
+        f"wingetcreate new {' '.join(urls)}"
+    )
+
+
+def check(config: Config, version: str, repo: str) -> None:
     """Dry run: the package must already exist, and should cover every Windows target."""
     release = config.release
     assert release is not None
     package_id = release.winget.id
     manifest = newest_installer_manifest(package_id)
     if manifest is None:
+        if version == semver.FIRST:
+            warn(first_submission(config, version, repo))
+            return
         raise Failure(
             f"{package_id} isn't in winget-pkgs yet. The first version is a one-time manual "
             "submission (wingetcreate new <url>); later releases update it automatically."
@@ -111,6 +131,11 @@ def submit(root: Path, config: Config, version: str) -> None:
     package_id = release.winget.id
     manifest = newest_installer_manifest(package_id)
     if manifest is None:
+        if version == semver.FIRST:
+            message = first_submission(config, version, repository(root))
+            warn(message)
+            summary(message)
+            return
         raise Failure(f"{package_id} isn't in winget-pkgs yet; submit the first version by hand")
     problem = layout_problem(manifest, release.binaries[0])
     if problem:
