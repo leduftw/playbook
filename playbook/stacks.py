@@ -92,6 +92,7 @@ DOTNET_NOTICES = {
 
 # And the file a standalone Python program must carry: Python's own licence.
 PYTHON_NOTICES = {"LICENSE.txt": "PYTHON-LICENSE.txt"}
+PYTHON_THIRD_PARTY_NOTICES = "PYTHON-THIRD-PARTY-NOTICES.txt"
 
 
 def archive_name(name: str, target: str) -> str:

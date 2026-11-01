@@ -2,6 +2,8 @@ import os
 import sys
 import tempfile
 import unittest
+import urllib.error
+from collections import namedtuple
 from pathlib import Path
 from unittest import mock
 
@@ -122,7 +124,8 @@ class ExpectedFilesTest(unittest.TestCase):
     def test_python_archives_also_hold_the_licence_of_the_python_inside(self):
         subtitler = config(SUBTITLER).release
         self.assertEqual(
-            expected_files(subtitler, "windows-arm64"), ["LICENSE", "PYTHON-LICENSE.txt", "README.md", "subtitler.exe"]
+            expected_files(subtitler, "windows-arm64"),
+            ["LICENSE", "PYTHON-LICENSE.txt", "PYTHON-THIRD-PARTY-NOTICES.txt", "README.md", "subtitler.exe"],
         )
 
 
@@ -180,6 +183,90 @@ class BuildPythonTest(unittest.TestCase):
         notices = build._python_notices()
         self.assertEqual(list(notices.values()), ["PYTHON-LICENSE.txt"])
         self.assertIn("PYTHON SOFTWARE FOUNDATION LICENSE", next(iter(notices)).read_text(encoding="utf-8"))
+
+    def test_the_finished_archive_carries_both_python_and_third_party_notices(self):
+        for name in self.release.files:
+            (self.root / name).write_text(name)
+        (self.work / "subtitler").write_text("a built program")
+        licence = self.root / "python-licence"
+        licence.write_text("Python's licence")
+        with (
+            mock.patch.object(build, "_build_python", return_value=self.work),
+            mock.patch.object(build, "_python_notices", return_value={licence: "PYTHON-LICENSE.txt"}),
+            mock.patch.object(build, "_python_third_party_notices", return_value="third-party licences"),
+            mock.patch.object(build, "source_date", return_value=1_700_000_000),
+        ):
+            archive = build.build(self.root, config(SUBTITLER), "linux-x64", "1.2.3", self.work / "archives")
+        payload = self.work / "payload"
+        extract(archive, payload)
+        self.assertEqual(sorted(p.name for p in payload.iterdir()), expected_files(self.release, "linux-x64"))
+        self.assertEqual((payload / "PYTHON-LICENSE.txt").read_text(), "Python's licence")
+        self.assertEqual((payload / "PYTHON-THIRD-PARTY-NOTICES.txt").read_text(), "third-party licences")
+
+
+class PythonThirdPartyNoticesTest(unittest.TestCase):
+    VERSION = namedtuple("Version", "major minor micro releaselevel serial")
+
+    def test_the_build_includes_attributed_notices_for_the_exact_python_and_its_libraries(self):
+        texts = [
+            b"CPython OpenSSL libffi zlib expat libmpdec",
+            b"bzip2 copyright",
+            b"XZ licensing overview",
+            b"0BSD",
+            b"Meta BSD",
+            b"liblzma is in the public domain",
+            b"2016-present, Facebook, Inc.",
+        ]
+        responses = []
+        for text in texts:
+            response = mock.MagicMock()
+            response.__enter__.return_value.read.return_value = text
+            responses.append(response)
+        with (
+            mock.patch.object(build.sys, "version_info", self.VERSION(3, 14, 6, "final", 0)),
+            mock.patch.object(build.urllib.request, "urlopen", side_effect=responses) as fetch,
+        ):
+            notices = build._python_third_party_notices()
+        urls = [call.args[0] for call in fetch.call_args_list]
+        self.assertIn("/python/cpython/v3.14.6/Doc/license.rst", urls[0])
+        for text, url in zip(texts, urls, strict=True):
+            self.assertIn(text.decode(), notices)
+            self.assertIn(f"Source: {url}", notices)
+        self.assertIn("/bzip2-1.0.8/LICENSE", urls[1])
+        self.assertIn("/xz/v5.8.1/COPYING", urls[2])
+        self.assertIn("/xz/v5.8.1/COPYING.0BSD", urls[3])
+        self.assertIn("/zstd/v1.5.7/LICENSE", urls[4])
+        self.assertIn("/xz/v5.2.5/COPYING", urls[5])
+        self.assertIn("/zstd/v1.4.8/LICENSE", urls[6])
+        self.assertIn("Additional project", notices)
+
+    def test_prerelease_python_uses_its_exact_source_tag(self):
+        response = mock.MagicMock()
+        response.__enter__.return_value.read.return_value = b"a licence"
+        with (
+            mock.patch.object(build.sys, "version_info", self.VERSION(3, 15, 0, "candidate", 2)),
+            mock.patch.object(build.urllib.request, "urlopen", return_value=response) as fetch,
+        ):
+            build._python_third_party_notices()
+        self.assertIn("/v3.15.0rc2/Doc/license.rst", fetch.call_args_list[0].args[0])
+
+    def test_a_missing_notice_stops_the_release_with_its_source(self):
+        with (
+            mock.patch.object(build.urllib.request, "urlopen", side_effect=urllib.error.URLError("offline")),
+            self.assertRaisesRegex(
+                Failure, r"couldn't fetch.*https://raw.githubusercontent.com/python/cpython/.*offline"
+            ),
+        ):
+            build._python_third_party_notices()
+
+    def test_an_empty_response_cannot_silently_omit_a_notice(self):
+        response = mock.MagicMock()
+        response.__enter__.return_value.read.return_value = b"\n"
+        with (
+            mock.patch.object(build.urllib.request, "urlopen", return_value=response),
+            self.assertRaisesRegex(Failure, "notice from .* is empty"),
+        ):
+            build._python_third_party_notices()
 
 
 if __name__ == "__main__":

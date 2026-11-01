@@ -56,10 +56,11 @@ actionlint
   libraries to any program the tool starts. Neither shows up on the machine that
   built it. A tool's own release smoke test has to prove them, as subtitler's does,
   because only the tool knows how to start another program.
-- **A standalone Python program's archive holds Python's licence, and no others.**
-  It also bundles libraries with licences of their own, such as OpenSSL, and which
-  ones depends on the system: no single file on a build machine lists them all.
-  Python's licence file only covers them in part, and only on Windows.
+- **Standalone Python archives carry Python's licence and third-party notices.**
+  The build gets the notices from the exact Python release's documentation and
+  supplements its omitted bzip2, liblzma and libzstd notices. Python's installed licence
+  alone doesn't cover its bundled libraries on every platform. A project that
+  adds dependencies must also include the notices those dependencies require.
 - **A first release can't be on WinGet.** The first submission is by hand and needs
   the release's files, so for version 1.0.0 a missing package only warns.
 - **A change to anything that renders into repos ships as a release.** Merged
