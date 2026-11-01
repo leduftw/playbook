@@ -34,15 +34,13 @@ class PublishedPythonTest(unittest.TestCase):
         self.assertTrue((self.root / "src" / "my_tool" / "cli.py").is_file())
 
     def test_its_checks_pass_from_the_first_commit(self):
-        self.start()
-        command = stacks.check_commands(self.root, self.start_check())["test"][0].split()
+        check = self.start().checks[0]
+        python, *arguments = stacks.check_commands(self.root, check)["test"][0].split()
+        self.assertEqual(python, "python")
         result = subprocess.run(
-            [sys.executable, *command[1:]], cwd=self.root, capture_output=True, text=True, check=False
+            [sys.executable, *arguments], cwd=self.root, capture_output=True, text=True, check=False
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-
-    def start_check(self):
-        return load(self.root).checks[0]
 
     def test_it_starts_unreleased(self):
         self.assertEqual(stacks.read_version(self.root, self.start().release), "0.0.0")
