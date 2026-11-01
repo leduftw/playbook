@@ -7,7 +7,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from playbook.worktree import checkout_of, cleanup, remove_empty_folders, slugify
+from playbook.util import commit_subject, pr_title
+from playbook.worktree import checkout_of, cleanup, finish, remove_empty_folders, slugify
 
 ENV = {
     **os.environ,
@@ -65,6 +66,49 @@ class RemoveEmptyFoldersTest(unittest.TestCase):
         elsewhere.mkdir()
         remove_empty_folders(elsewhere, self.worktrees)
         self.assertTrue(elsewhere.is_dir())
+
+
+class CommitSubjectTest(unittest.TestCase):
+    def test_a_pr_lands_in_the_commit_style(self):
+        self.assertEqual(
+            commit_subject("Fix Windows installer replacement", 12),
+            "fix Windows installer replacement (#12)",
+        )
+
+    def test_a_pr_title_is_its_commit_with_a_capital(self):
+        self.assertEqual(pr_title("release 1.4.0"), "Release 1.4.0")
+        self.assertEqual(pr_title("fix Windows installer"), "Fix Windows installer")
+
+
+class FinishTest(unittest.TestCase):
+    def test_the_commit_comes_from_the_title_at_merge_time(self):
+        url = "https://github.com/o/r/pull/12"
+        pr = {
+            "number": 12,
+            "url": url,
+            "state": "OPEN",
+            "isDraft": False,
+            "headRefName": "dev/test/12-fix",
+            "closingIssuesReferences": [],
+            "title": "fix the title",
+        }
+        states = [pr, {**pr, "title": "Fix the installer"}, {**pr, "state": "MERGED"}]
+        with (
+            mock.patch("playbook.worktree.primary_checkout", return_value=Path(".")),
+            mock.patch("playbook.worktree.repository", return_value="o/r"),
+            mock.patch("playbook.worktree.checkout_of", return_value=None),
+            mock.patch("playbook.worktree.wait_for_checks"),
+            mock.patch("playbook.worktree.cleanup"),
+            mock.patch("playbook.worktree._pr", side_effect=states),
+            mock.patch("playbook.worktree.run", return_value=subprocess.CompletedProcess([], 0)) as run,
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            finish("12")
+        run.assert_called_once_with(
+            ["gh", "pr", "merge", url, "--squash", "--subject", "fix the installer (#12)"],
+            check=False,
+            capture=True,
+        )
 
 
 class CheckoutTest(unittest.TestCase):
