@@ -14,7 +14,7 @@ import subprocess
 from pathlib import Path
 
 from .config import Config
-from .util import Failure, gh_json, run, say, warn
+from .util import Failure, UsageError, gh_json, run, say, warn
 
 RULESET = "playbook"
 ACTIONS_APP_ID = 15368  # GitHub Actions, so only workflow runs can satisfy the checks
@@ -22,8 +22,8 @@ REQUIRED_CHECKS = ["playbook / checks", "playbook / title"]
 TAP = "leduftw/homebrew-tap"
 # Releases commit to the tap as this GitHub App, installed only on the tap with
 # Contents read and write. GitHub signs what an app commits through its API, so
-# the tap shows those commits as Verified; a git push from a workflow can't be
-# signed. Each repo's release environment holds one of the app's private keys.
+# the tap shows those commits as Verified. Each repo's release environment holds
+# one of the app's private keys.
 TAP_APP = "leduftw-tap"
 TAP_KEY_SECRET = "HOMEBREW_TAP_APP_PRIVATE_KEY"
 WINGET_SECRET = "WINGET_TOKEN"
@@ -153,6 +153,12 @@ def apply(repo: str, config: Config, tap_key: Path | None = None) -> list[str]:
 
     `tap_key` is a private key of the tap's app, stored in a published repo's release
     environment. GitHub can't create one through its API, so a person generates it."""
+    key = None
+    if tap_key is not None:
+        try:
+            key = tap_key.read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as error:
+            raise UsageError(f"couldn't read the tap app's private key from {tap_key}: {error}") from error
     todo: list[str] = []
     info = gh_json("api", f"repos/{repo}")
     if info["default_branch"] != "main":
@@ -203,10 +209,10 @@ def apply(repo: str, config: Config, tap_key: Path | None = None) -> list[str]:
                 {"name": "main", "type": "branch"},
             )
         say(f"{repo}: releases lock once published; the release environment only runs on main")
-        if tap_key and config.release and "homebrew" in config.release.channels:
+        if key is not None and config.release and "homebrew" in config.release.channels:
             run(
                 ["gh", "secret", "set", TAP_KEY_SECRET, "--env", "release", "--repo", repo],
-                input=tap_key.read_text(encoding="utf-8"),
+                input=key,
             )
             say(f"{repo}: stored the {TAP_APP} app's key, so its releases can commit to {TAP}")
         todo += missing_release_setup(repo, config)

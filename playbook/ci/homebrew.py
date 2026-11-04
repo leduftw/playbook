@@ -175,7 +175,8 @@ def publish(root: Path, config: Config, version: str, dist: Path, tap_dir: Path)
     }
     text = render(config, version, repo, urls, digests)
     formula = tap_dir / "Formula" / f"{config.name}.rb"
-    if formula.is_file() and formula.read_text(encoding="utf-8") == text:
+    previous = formula.read_bytes().decode("utf-8") if formula.is_file() else None
+    if previous == text:
         say(f"the tap already has {config.name} {version}")
         return
     formula.parent.mkdir(parents=True, exist_ok=True)
@@ -191,7 +192,9 @@ def publish(root: Path, config: Config, version: str, dist: Path, tap_dir: Path)
         _install_and_test(config, copy, "leduftw/playbook-verify", version)
 
     head = git("rev-parse", "HEAD", cwd=tap_dir)
-    commit_to_tap(formula.relative_to(tap_dir).as_posix(), text, f"update {config.name} to {version}", head, token)
+    commit_to_tap(
+        formula.relative_to(tap_dir).as_posix(), text, f"update {config.name} to {version}", head, token, previous
+    )
 
 
 COMMIT_ON_BRANCH = """
@@ -200,13 +203,37 @@ mutation($input: CreateCommitOnBranchInput!) {
 }
 """
 
+FORMULA_AT_COMMIT = """
+query($owner: String!, $name: String!, $expression: String!) {
+  repository(owner: $owner, name: $name) {
+    object(expression: $expression) { ... on Blob { text } }
+  }
+}
+"""
 
-def commit_to_tap(path: str, text: str, message: str, head: str, token: str) -> None:
+
+def _tap_formula(path: str, head: str, env: dict[str, str]) -> str | None:
+    owner, name = TAP.split("/")
+    body = {
+        "query": FORMULA_AT_COMMIT,
+        "variables": {"owner": owner, "name": name, "expression": f"{head}:{path}"},
+    }
+    result = run(["gh", "api", "graphql", "--input", "-"], input=json.dumps(body), capture=True, env=env)
+    blob = json.loads(result.stdout)["data"]["repository"]["object"]
+    if blob is None:
+        return None
+    text = blob.get("text")
+    if not isinstance(text, str):
+        raise Failure(f"couldn't read {path} at {head}: it isn't a text file")
+    return text
+
+
+def commit_to_tap(path: str, text: str, message: str, head: str, token: str, previous: str | None) -> None:
     """Commit one file to the tap's main through GitHub's API, as the app `token` belongs to.
 
     GitHub signs a commit that an app creates this way, so the tap shows it as Verified. The
     commit applies only on top of `head`; if another repo updated the tap meanwhile, it goes on
-    top of that instead, since formulae are separate files.
+    top of that instead, provided this formula hasn't changed.
     """
     env = {"GH_TOKEN": token}
     contents = base64.b64encode(text.encode("utf-8")).decode("ascii")
@@ -234,6 +261,12 @@ def commit_to_tap(path: str, text: str, message: str, head: str, token: str) -> 
         ).stdout.strip()
         if latest == head:
             raise Failure(f"couldn't commit the formula to {TAP}: {(result.stdout + result.stderr).strip()}")
+        current = _tap_formula(path, latest, env)
+        if current == text:
+            say(f"the tap already has {path}")
+            return
+        if current != previous:
+            raise Failure(f"{path} changed in the tap; refusing to overwrite its concurrent update")
         say(f"the tap moved on; committing on top of it ({attempt})")
         head = latest
     raise Failure(f"couldn't commit the formula to {TAP}: it kept moving")

@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest import mock
 
 from playbook import settings
+from playbook.util import UsageError
 from tests.fixtures import DBIRD, config
 
 
@@ -74,6 +75,25 @@ class ApplyTest(unittest.TestCase):
 
     def test_without_a_key_nothing_is_stored_or_generated(self):
         self.assertEqual(self.apply(None), [])
+
+    def test_an_unreadable_key_stops_before_changing_any_settings(self):
+        for error in (
+            FileNotFoundError("missing key"),
+            PermissionError("unreadable key"),
+            UnicodeError("invalid encoding"),
+        ):
+            with (
+                self.subTest(error=type(error).__name__),
+                mock.patch.object(Path, "read_text", side_effect=error),
+                mock.patch.object(settings, "gh_json") as gh,
+                mock.patch.object(settings, "_api") as api,
+                mock.patch.object(settings, "run") as run,
+            ):
+                with self.assertRaisesRegex(UsageError, "couldn't read the tap app's private key"):
+                    settings.apply("leduftw/dbird", config(DBIRD), tap_key=Path("missing.pem"))
+                gh.assert_not_called()
+                api.assert_not_called()
+                run.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -405,7 +405,7 @@ jobs:
           path: .tap
           persist-credentials: false
       # The leduftw-tap app commits the formula through GitHub's API, which signs
-      # it, so the tap shows the commit as Verified. A git push can't be signed.
+      # it, so the tap shows the commit as Verified.
       - name: Get a token for the tap
         id: tap
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0

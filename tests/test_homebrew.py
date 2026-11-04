@@ -85,8 +85,13 @@ COMMITTED = json.dumps(
 )
 
 
+def formula_at_commit(text):
+    blob = {"text": text} if text is not None else None
+    return json.dumps({"data": {"repository": {"object": blob}}})
+
+
 class CommitToTapTest(unittest.TestCase):
-    def commit(self, *results):
+    def commit(self, *results, previous="old formula\n"):
         """Run commit_to_tap with each gh call returning the next (exit code, stdout); return the calls."""
         calls, queue = [], list(results)
 
@@ -98,7 +103,10 @@ class CommitToTapTest(unittest.TestCase):
             return subprocess.CompletedProcess(command, code, stdout, "")
 
         with mock.patch.object(homebrew, "run", fake_run):
-            homebrew.commit_to_tap("Formula/dbird.rb", "class Dbird\n", "update dbird to 1.4.2", HEAD, "app-token")
+            homebrew.commit_to_tap(
+                "Formula/dbird.rb", "class Dbird\n", "update dbird to 1.4.2", HEAD, "app-token", previous
+            )
+        self.assertEqual(queue, [])
         return calls
 
     def change(self, call):
@@ -123,12 +131,38 @@ class CommitToTapTest(unittest.TestCase):
 
     def test_a_tap_that_moved_gets_the_commit_on_top(self):
         calls = self.commit(
-            (1, '{"errors": [{"message": "Expected branch to point to a"}]}'), (0, MOVED + "\n"), (0, COMMITTED)
+            (1, '{"errors": [{"message": "Expected branch to point to a"}]}'),
+            (0, MOVED + "\n"),
+            (0, formula_at_commit("old formula\n")),
+            (0, COMMITTED),
         )
         self.assertEqual(
             calls[1]["command"], ["gh", "api", "repos/leduftw/homebrew-tap/git/ref/heads/main", "--jq", ".object.sha"]
         )
-        self.assertEqual(self.change(calls[2])["expectedHeadOid"], MOVED)
+        lookup = json.loads(calls[2]["input"])["variables"]
+        self.assertEqual(
+            lookup, {"owner": "leduftw", "name": "homebrew-tap", "expression": f"{MOVED}:Formula/dbird.rb"}
+        )
+        self.assertEqual(calls[2]["env"], {"GH_TOKEN": "app-token"})
+        self.assertEqual(self.change(calls[3])["expectedHeadOid"], MOVED)
+
+    def test_an_applied_commit_with_a_lost_response_is_not_repeated(self):
+        calls = self.commit((1, "connection lost"), (0, MOVED), (0, formula_at_commit("class Dbird\n")))
+        self.assertEqual(len(calls), 3)
+
+    def test_a_concurrent_change_to_the_same_formula_is_not_overwritten(self):
+        with self.assertRaisesRegex(Failure, "refusing to overwrite its concurrent update"):
+            self.commit((1, "head changed"), (0, MOVED), (0, formula_at_commit("newer formula\n")))
+
+    def test_a_concurrent_formula_deletion_is_not_undone(self):
+        with self.assertRaisesRegex(Failure, "refusing to overwrite its concurrent update"):
+            self.commit((1, "head changed"), (0, MOVED), (0, formula_at_commit(None)))
+
+    def test_a_new_formula_can_retry_after_another_formula_changes(self):
+        calls = self.commit(
+            (1, "head changed"), (0, MOVED), (0, formula_at_commit(None)), (0, COMMITTED), previous=None
+        )
+        self.assertEqual(self.change(calls[3])["expectedHeadOid"], MOVED)
 
     def test_a_failure_on_an_unmoved_tap_stops_with_the_reason(self):
         with self.assertRaisesRegex(Failure, "Resource not accessible by integration"):
@@ -165,6 +199,23 @@ class PublishTest(unittest.TestCase):
         (self.tap / "Formula" / "dbird.rb").write_text(render(self.config, "1.4.2", "leduftw/dbird", urls, digests))
         commit = self.publish({"GITHUB_REPOSITORY": "leduftw/dbird", "HOMEBREW_TAP_TOKEN": "app-token"})
         commit.assert_not_called()
+
+    def test_the_formula_is_installed_and_tested_before_the_api_commit(self):
+        formula = self.tap / "Formula" / "dbird.rb"
+        formula.parent.mkdir(parents=True)
+        formula.write_text("old formula\n")
+        events = []
+        with (
+            mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "leduftw/dbird", "HOMEBREW_TAP_TOKEN": "app-token"}),
+            mock.patch.object(homebrew, "git", return_value=HEAD),
+            mock.patch.object(homebrew, "run", side_effect=lambda *a, **kw: events.append("syntax")),
+            mock.patch.object(homebrew, "_install_and_test", side_effect=lambda *a: events.append("install/test")),
+            mock.patch.object(homebrew, "commit_to_tap", side_effect=lambda *a: events.append("commit")) as commit,
+        ):
+            homebrew.publish(self.temp, self.config, "1.4.2", self.dist, self.tap)
+        self.assertEqual(events, ["syntax", "install/test", "commit"])
+        self.assertEqual(commit.call_args.args[-1], "old formula\n")
+        self.assertEqual(commit.call_args.args[1], formula.read_text())
 
 
 if __name__ == "__main__":
