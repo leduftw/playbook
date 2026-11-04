@@ -2,8 +2,8 @@
 
 Squash is the only merge method, merged branches are deleted, main is protected
 by a ruleset that requires a PR with the playbook's checks, and the standard
-labels exist. Published repos also get locked (immutable) releases, a release
-environment that only main can use, and their own deploy key for the tap.
+labels exist. Published repos also get locked (immutable) releases and a release
+environment that only main can use, which holds a private key of the tap's app.
 Applying is idempotent; audit reports anything that has drifted.
 """
 
@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import json
 import subprocess
-import tempfile
 from pathlib import Path
 
 from .config import Config
@@ -21,7 +20,12 @@ RULESET = "playbook"
 ACTIONS_APP_ID = 15368  # GitHub Actions, so only workflow runs can satisfy the checks
 REQUIRED_CHECKS = ["playbook / checks", "playbook / title"]
 TAP = "leduftw/homebrew-tap"
-TAP_SECRET = "HOMEBREW_TAP_DEPLOY_KEY"
+# Releases commit to the tap as this GitHub App, installed only on the tap with
+# Contents read and write. GitHub signs what an app commits through its API, so
+# the tap shows those commits as Verified; a git push from a workflow can't be
+# signed. Each repo's release environment holds one of the app's private keys.
+TAP_APP = "leduftw-tap"
+TAP_KEY_SECRET = "HOMEBREW_TAP_APP_PRIVATE_KEY"
 WINGET_SECRET = "WINGET_TOKEN"
 
 REPO_SETTINGS = {
@@ -130,8 +134,12 @@ def missing_release_setup(repo: str, config: Config) -> list[str]:
     # Jobs in the release environment also see repo-level secrets; audit asks
     # for those to move into the environment, but they work meanwhile.
     secrets |= repository_secrets(repo)
-    if "homebrew" in release.channels and TAP_SECRET not in secrets:
-        problems.append(f"{TAP_SECRET} is missing from the release environment (run: playbook settings)")
+    if "homebrew" in release.channels and TAP_KEY_SECRET not in secrets:
+        problems.append(
+            f"{TAP_KEY_SECRET} is missing from the release environment: generate a private key at "
+            f"https://github.com/settings/apps/{TAP_APP}, run: playbook settings {repo} --tap-key <file>, "
+            "then delete the file"
+        )
     if "winget" in release.channels and WINGET_SECRET not in secrets:
         problems.append(
             f"{WINGET_SECRET} is missing from the release environment: create a classic token with "
@@ -140,8 +148,11 @@ def missing_release_setup(repo: str, config: Config) -> list[str]:
     return problems
 
 
-def apply(repo: str, config: Config) -> list[str]:
-    """Apply every shared setting; returns what still needs a human."""
+def apply(repo: str, config: Config, tap_key: Path | None = None) -> list[str]:
+    """Apply every shared setting; returns what still needs a human.
+
+    `tap_key` is a private key of the tap's app, stored in a published repo's release
+    environment. GitHub can't create one through its API, so a person generates it."""
     todo: list[str] = []
     info = gh_json("api", f"repos/{repo}")
     if info["default_branch"] != "main":
@@ -192,32 +203,11 @@ def apply(repo: str, config: Config) -> list[str]:
                 {"name": "main", "type": "branch"},
             )
         say(f"{repo}: releases lock once published; the release environment only runs on main")
-        if config.release and "homebrew" in config.release.channels:
-            _ensure_tap_key(repo, config.name)
+        if tap_key and config.release and "homebrew" in config.release.channels:
+            run(
+                ["gh", "secret", "set", TAP_KEY_SECRET, "--env", "release", "--repo", repo],
+                input=tap_key.read_text(encoding="utf-8"),
+            )
+            say(f"{repo}: stored the {TAP_APP} app's key, so its releases can commit to {TAP}")
         todo += missing_release_setup(repo, config)
     return todo
-
-
-def _ensure_tap_key(repo: str, name: str) -> None:
-    """Give the repo its own deploy key on the tap, stored in its release environment."""
-    secrets = environment_secrets(repo) or set()
-    if TAP_SECRET in secrets:
-        return
-    title = f"{name} release"
-    for key in gh_json("api", f"repos/{TAP}/keys") or []:
-        if key["title"] == title:
-            _api("DELETE", f"repos/{TAP}/keys/{key['id']}")
-    with tempfile.TemporaryDirectory(prefix="playbook-key-") as temp:
-        key_path = Path(temp) / "key"
-        run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", f"{repo} release", "-f", str(key_path)])
-        public = key_path.with_suffix(".pub").read_text(encoding="utf-8").strip()
-        _api("POST", f"repos/{TAP}/keys", {"title": title, "key": public, "read_only": False})
-        run(
-            ["gh", "secret", "set", TAP_SECRET, "--env", "release", "--repo", repo],
-            input=key_path.read_text(encoding="utf-8"),
-        )
-    say(f"{repo}: created its deploy key on {TAP} ({title})")
-
-
-def tap_keys() -> list[str]:
-    return [key["title"] for key in gh_json("api", f"repos/{TAP}/keys") or []]

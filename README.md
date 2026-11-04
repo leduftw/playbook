@@ -265,9 +265,16 @@ ships.
   WinGet's validation starts the program with no arguments, which the
   [command-line rules](#how-command-line-tools-behave) make exit 0 and every
   release PR checks, so no submission needs a comment explaining how to run it.
+- **Homebrew**: releases commit their formula to `leduftw/homebrew-tap` as the
+  `leduftw-tap` GitHub App, which is installed only on the tap, with Contents
+  read and write. GitHub signs what an app commits through its API, so the tap
+  shows those commits as Verified, which a `git push` from a workflow can't be.
+  Each published repo's release environment holds one of the app's private keys
+  as `HOMEBREW_TAP_APP_PRIVATE_KEY`. For a new repo, generate a key at
+  <https://github.com/settings/apps/leduftw-tap>, run
+  `playbook settings <name> --tap-key <file>`, then delete the file.
 
-`playbook settings` does everything else, including each published repo's own
-deploy key for the Homebrew tap.
+`playbook settings` does everything else.
 
 ## Checking a download
 
