@@ -91,7 +91,7 @@ def cmd_settings(args: argparse.Namespace) -> None:
     for repo in _repos(args):
         with tempfile.TemporaryDirectory(prefix="playbook-settings-") as temp:
             root = clone(repo, Path(temp) / repo.split("/")[1])
-            todo += settings.apply(repo, load(root))
+            todo += settings.apply(repo, load(root), tap_key=args.tap_key)
     if todo:
         say("still to do:")
         for item in todo:
@@ -237,6 +237,13 @@ def parser(color: bool = True) -> argparse.ArgumentParser:
             command.add_argument("--here", action="store_true", help="the current checkout, without GitHub")
         if name == "sync":
             command.add_argument("--dry-run", action="store_true", help="show what would change")
+        if name == "settings":
+            command.add_argument(
+                "--tap-key",
+                type=Path,
+                metavar="<file>",
+                help="a private key of the leduftw-tap app, for a published repo's release environment",
+            )
         command.set_defaults(func=func)
 
     show_help = commands.add_parser("help", help="show this help, or the help of one command")

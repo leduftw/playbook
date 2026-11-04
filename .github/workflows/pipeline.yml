@@ -402,10 +402,23 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: leduftw/homebrew-tap
-          ssh-key: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
           path: .tap
+          persist-credentials: false
+      # The leduftw-tap app commits the formula through GitHub's API, which signs
+      # it, so the tap shows the commit as Verified.
+      - name: Get a token for the tap
+        id: tap
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: Iv23liwdN8wM3F48ccqB
+          private-key: ${{ secrets.HOMEBREW_TAP_APP_PRIVATE_KEY }}
+          owner: leduftw
+          repositories: homebrew-tap
+          permission-contents: write
       - name: Update the formula
         shell: bash
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ steps.tap.outputs.token }}
         run: python "$PLAYBOOK/bin/playbook" ci homebrew --version "${{ needs.plan.outputs.version }}" --dist dist --tap .tap
 
   winget:

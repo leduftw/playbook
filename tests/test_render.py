@@ -30,9 +30,12 @@ class ManagedFilesTest(unittest.TestCase):
         levels = {"none": 0, "read": 1, "write": 2}
 
         def permissions(text):
+            # Only `permissions:` blocks count: an action input such as
+            # create-github-app-token's `permission-contents: write` asks the caller for nothing.
             found = {}
-            for scope, level in re.findall(r"^\s+([a-z-]+): (read|write)$", text, re.M):
-                found[scope] = max(found.get(scope, 0), levels[level])
+            for _, block in re.findall(r"^( *)permissions:\n((?:\1 +[a-z-]+: [a-z-]+(?:\n|\Z))+)", text, re.M):
+                for scope, level in re.findall(r"([a-z-]+): (read|write)$", block, re.M):
+                    found[scope] = max(found.get(scope, 0), levels[level])
             return found
 
         files = render.managed_files(self.root, config(DBIRD))
@@ -63,7 +66,7 @@ class ManagedFilesTest(unittest.TestCase):
         # A called workflow sees no secrets unless the caller passes them, and
         # dry runs use none, so a missing line only shows on a real release.
         pipeline = (ROOT / ".github" / "workflows" / "pipeline.yml").read_text()
-        self.assertIn("secrets.HOMEBREW_TAP_DEPLOY_KEY", pipeline)
+        self.assertIn("secrets.HOMEBREW_TAP_APP_PRIVATE_KEY", pipeline)
         workflow = render.managed_files(self.root, config(DBIRD))[".github/workflows/playbook.yml"]
         job = workflow.split("    uses: ", 1)[1].split("\n  registry:", 1)[0]
         self.assertIn("secrets: inherit", job)

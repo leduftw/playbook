@@ -2,13 +2,16 @@
 
 Homebrew only installs formulae that live in a tap, so both the dry run on a
 release PR and the real update install the formula from a tap before anything
-is pushed. The dry run points at the archives just built; the real update
+is committed. The dry run points at the archives just built; the real update
 points at the published release.
 """
 
 from __future__ import annotations
 
+import base64
 import hashlib
+import json
+import os
 import re
 import shutil
 import tempfile
@@ -160,7 +163,10 @@ def dry_run(root: Path, config: Config, version: str, dist: Path) -> None:
 
 
 def publish(root: Path, config: Config, version: str, dist: Path, tap_dir: Path) -> None:
-    """Point the formula at the published release, prove it installs, then push it."""
+    """Point the formula at the published release, prove it installs, then commit it to the tap."""
+    token = os.environ.get("HOMEBREW_TAP_TOKEN")
+    if not token:
+        raise Failure("HOMEBREW_TAP_TOKEN isn't set; the pipeline gets it from the leduftw-tap app")
     repo = repository(root)
     digests = _digests(config, dist)
     urls = {
@@ -169,17 +175,13 @@ def publish(root: Path, config: Config, version: str, dist: Path, tap_dir: Path)
     }
     text = render(config, version, repo, urls, digests)
     formula = tap_dir / "Formula" / f"{config.name}.rb"
+    previous = formula.read_bytes().decode("utf-8") if formula.is_file() else None
+    if previous == text:
+        say(f"the tap already has {config.name} {version}")
+        return
     formula.parent.mkdir(parents=True, exist_ok=True)
     formula.write_text(text, encoding="utf-8")
     run(["ruby", "-c", str(formula)])
-
-    git("config", "user.name", "github-actions[bot]", cwd=tap_dir)
-    git("config", "user.email", "41898282+github-actions[bot]@users.noreply.github.com", cwd=tap_dir)
-    git("add", str(formula.relative_to(tap_dir)), cwd=tap_dir)
-    if run(["git", "diff", "--cached", "--quiet"], cwd=tap_dir, check=False).returncode == 0:
-        say(f"the tap already has {config.name} {version}")
-        return
-    git("commit", "-q", "-m", f"update {config.name} to {version}", cwd=tap_dir)
 
     with tempfile.TemporaryDirectory(prefix="playbook-tap-") as temp:
         copy = Path(temp) / "homebrew-tap"
@@ -189,12 +191,82 @@ def publish(root: Path, config: Config, version: str, dist: Path, tap_dir: Path)
         git("-c", "user.name=playbook", "-c", "user.email=playbook@localhost", "commit", "-q", "-m", "verify", cwd=copy)
         _install_and_test(config, copy, "leduftw/playbook-verify", version)
 
-    # Another repo may have updated the tap meanwhile; formulae are separate
-    # files, so rebasing onto it never conflicts.
+    head = git("rev-parse", "HEAD", cwd=tap_dir)
+    commit_to_tap(
+        formula.relative_to(tap_dir).as_posix(), text, f"update {config.name} to {version}", head, token, previous
+    )
+
+
+COMMIT_ON_BRANCH = """
+mutation($input: CreateCommitOnBranchInput!) {
+  createCommitOnBranch(input: $input) { commit { url } }
+}
+"""
+
+FORMULA_AT_COMMIT = """
+query($owner: String!, $name: String!, $expression: String!) {
+  repository(owner: $owner, name: $name) {
+    object(expression: $expression) { ... on Blob { text } }
+  }
+}
+"""
+
+
+def _tap_formula(path: str, head: str, env: dict[str, str]) -> str | None:
+    owner, name = TAP.split("/")
+    body = {
+        "query": FORMULA_AT_COMMIT,
+        "variables": {"owner": owner, "name": name, "expression": f"{head}:{path}"},
+    }
+    result = run(["gh", "api", "graphql", "--input", "-"], input=json.dumps(body), capture=True, env=env)
+    blob = json.loads(result.stdout)["data"]["repository"]["object"]
+    if blob is None:
+        return None
+    text = blob.get("text")
+    if not isinstance(text, str):
+        raise Failure(f"couldn't read {path} at {head}: it isn't a text file")
+    return text
+
+
+def commit_to_tap(path: str, text: str, message: str, head: str, token: str, previous: str | None) -> None:
+    """Commit one file to the tap's main through GitHub's API, as the app `token` belongs to.
+
+    GitHub signs a commit that an app creates this way, so the tap shows it as Verified. The
+    commit applies only on top of `head`; if another repo updated the tap meanwhile, it goes on
+    top of that instead, provided this formula hasn't changed.
+    """
+    env = {"GH_TOKEN": token}
+    contents = base64.b64encode(text.encode("utf-8")).decode("ascii")
     for attempt in range(1, 6):
-        if run(["git", "push", "-q", "origin", "HEAD:main"], cwd=tap_dir, check=False).returncode == 0:
-            say(f"pushed {config.name} {version} to {TAP}")
+        body = {
+            "query": COMMIT_ON_BRANCH,
+            "variables": {
+                "input": {
+                    "branch": {"repositoryNameWithOwner": TAP, "branchName": "main"},
+                    "message": {"headline": message},
+                    "expectedHeadOid": head,
+                    "fileChanges": {"additions": [{"path": path, "contents": contents}]},
+                }
+            },
+        }
+        result = run(
+            ["gh", "api", "graphql", "--input", "-"], input=json.dumps(body), capture=True, check=False, env=env
+        )
+        if result.returncode == 0:
+            url = json.loads(result.stdout)["data"]["createCommitOnBranch"]["commit"]["url"]
+            say(f"committed {message} to {TAP}: {url}")
             return
-        git("pull", "-q", "--rebase", "origin", "main", cwd=tap_dir)
-        say(f"the tap moved on; rebased and retrying ({attempt})")
-    raise Failure(f"couldn't push the formula to {TAP}")
+        latest = run(
+            ["gh", "api", f"repos/{TAP}/git/ref/heads/main", "--jq", ".object.sha"], capture=True, env=env
+        ).stdout.strip()
+        if latest == head:
+            raise Failure(f"couldn't commit the formula to {TAP}: {(result.stdout + result.stderr).strip()}")
+        current = _tap_formula(path, latest, env)
+        if current == text:
+            say(f"the tap already has {path}")
+            return
+        if current != previous:
+            raise Failure(f"{path} changed in the tap; refusing to overwrite its concurrent update")
+        say(f"the tap moved on; committing on top of it ({attempt})")
+        head = latest
+    raise Failure(f"couldn't commit the formula to {TAP}: it kept moving")
