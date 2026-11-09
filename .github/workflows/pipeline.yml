@@ -105,7 +105,7 @@ jobs:
           workspaces: ${{ matrix.dir }}
       - name: Set up .NET
         if: matrix.stack == 'dotnet'
-        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
           global-json-file: ${{ matrix.global_json }}
           dotnet-version: ${{ matrix.global_json == '' && '10.0.x' || '' }}
@@ -181,7 +181,7 @@ jobs:
           key: ${{ matrix.target }}
       - name: Set up .NET
         if: matrix.stack == 'dotnet'
-        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
           global-json-file: ${{ matrix.global_json }}
           dotnet-version: ${{ matrix.global_json == '' && '10.0.x' || '' }}
@@ -269,7 +269,7 @@ jobs:
           toolchain: stable
       - name: Set up .NET
         if: needs.plan.outputs.registry == 'nuget'
-        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
           global-json-file: ${{ hashFiles('global.json') != '' && 'global.json' || '' }}
           dotnet-version: ${{ hashFiles('global.json') == '' && '10.0.x' || '' }}
