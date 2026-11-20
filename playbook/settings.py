@@ -142,8 +142,8 @@ def missing_release_setup(repo: str, config: Config) -> list[str]:
         )
     if "winget" in release.channels and WINGET_SECRET not in secrets:
         problems.append(
-            f"{WINGET_SECRET} is missing from the release environment: create a classic token with "
-            f"public_repo, then run: gh secret set {WINGET_SECRET} --env release --repo {repo}"
+            f"{WINGET_SECRET} is missing from the release environment: create a classic token with the "
+            f"public_repo and workflow scopes, then run: gh secret set {WINGET_SECRET} --env release --repo {repo}"
         )
     return problems
 

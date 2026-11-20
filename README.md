@@ -256,12 +256,15 @@ ships.
   or PyPI, add a trusted publisher with repository `leduftw/<name>`, workflow
   `playbook.yml` and environment `release`. PyPI takes this before a package's
   first upload, as a pending publisher for the name in `pyproject.toml`.
-- **WinGet**: one classic GitHub token with the `public_repo` scope, stored in
-  each published repo's release environment
+- **WinGet**: one classic GitHub token with the `public_repo` and `workflow`
+  scopes, stored in each published repo's release environment
   (`gh secret set WINGET_TOKEN --env release --repo leduftw/<name>`), and a
   manual submission of each new package once its first release is out
   (`wingetcreate new <url>`). That first release only warns that the package
   isn't on WinGet yet, and its run prints the exact command.
+  Each release first brings the token owner's fork of winget-pkgs up to date
+  and submits from it, and GitHub needs the `workflow` scope for that update
+  whenever winget-pkgs has changed its own workflows.
   WinGet's validation starts the program with no arguments, which the
   [command-line rules](#how-command-line-tools-behave) make exit 0 and every
   release PR checks, so no submission needs a comment explaining how to run it.

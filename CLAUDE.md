@@ -66,6 +66,11 @@ actionlint
   adds dependencies must also include the notices those dependencies require.
 - **A first release can't be on WinGet.** The first submission is by hand and needs
   the release's files, so for version 1.0.0 a missing package only warns.
+- **The WinGet job syncs the fork before WingetCreate does.** WingetCreate syncs it
+  through the same API, but reports GitHub's refusal without the reason. GitHub
+  refuses whenever winget-pkgs has changed its own workflows since the last sync and
+  the token lacks the `workflow` scope, so `WINGET_TOKEN` carries that scope, and a
+  failed sync names the reason and how to sync by hand.
 - **A change to anything that renders into repos ships as a release.** Merged
   changes reach repos only when `VERSION` moves. A change that needs repos to change
   is a new major.

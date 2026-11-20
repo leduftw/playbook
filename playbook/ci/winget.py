@@ -3,8 +3,8 @@
 The first version of a package is a one-time manual submission, which needs the
 release's files, so a repo's first release can't be on WinGet yet and only says
 so. Every later release is a PR that WingetCreate opens from the token owner's
-fork, and a missing token or a missing package fails the job loudly instead of
-skipping it.
+fork, once the job has brought that fork up to date, and a missing token or a
+missing package fails the job loudly instead of skipping it.
 """
 
 from __future__ import annotations
@@ -14,6 +14,7 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 import tempfile
 import urllib.request
 from pathlib import Path
@@ -26,6 +27,9 @@ WINGETCREATE_URL = "https://github.com/microsoft/winget-create/releases/download
 WINGETCREATE_SHA256 = "24042bd37915805615e6cf969ac57c6439124c3fe85823327f5f3fb24bd9ffea"
 ARCHITECTURES = {"windows-x64": "x64", "windows-arm64": "arm64"}
 PULL_REQUEST = re.compile(r"https://github\.com/microsoft/winget-pkgs/pull/\d+")
+UPSTREAM = "microsoft/winget-pkgs"
+# How GitHub refuses to bring changes to workflow files into a repo for a token that can't change them.
+WORKFLOW_REFUSAL = re.compile(r"without `workflows?` (scope|permission)")
 
 
 def manifest_path(package_id: str) -> str:
@@ -33,17 +37,26 @@ def manifest_path(package_id: str) -> str:
     return f"manifests/{publisher[0].lower()}/{publisher}/{name}"
 
 
+def _not_found(result: subprocess.CompletedProcess[str]) -> bool:
+    return "Not Found" in result.stderr or "404" in result.stdout + result.stderr
+
+
+def _reason(result: subprocess.CompletedProcess[str]) -> str:
+    """What GitHub said about a failed `gh api` call."""
+    return result.stderr.strip().removeprefix("gh: ") or result.stdout.strip()
+
+
 def newest_installer_manifest(package_id: str) -> str | None:
     """The installer manifest of the newest version on winget-pkgs, or None if the package is absent."""
     result = run(
-        ["gh", "api", f"repos/microsoft/winget-pkgs/contents/{manifest_path(package_id)}"],
+        ["gh", "api", f"repos/{UPSTREAM}/contents/{manifest_path(package_id)}"],
         check=False,
         capture=True,
     )
     if result.returncode != 0:
         # Only a missing package means "not on WinGet"; anything else (no
         # token, rate limits) must fail loudly instead of reading as absent.
-        if "Not Found" in result.stderr or "404" in result.stdout + result.stderr:
+        if _not_found(result):
             return None
         raise Failure(f"couldn't read {package_id} from winget-pkgs: {result.stderr.strip()}")
     versions = json.loads(result.stdout or "null")
@@ -52,7 +65,7 @@ def newest_installer_manifest(package_id: str) -> str | None:
         return None
     newest = max(names, key=lambda v: [int(p) if p.isdigit() else 0 for p in re.split(r"[.-]", v)])
     path = f"{manifest_path(package_id)}/{newest}/{package_id}.installer.yaml"
-    content = gh_json("api", f"repos/microsoft/winget-pkgs/contents/{path}")
+    content = gh_json("api", f"repos/{UPSTREAM}/contents/{path}")
     return base64.b64decode(content["content"]).decode("utf-8")
 
 
@@ -122,6 +135,54 @@ def check(config: Config, version: str, repo: str) -> None:
     say(f"{package_id} is on WinGet with {', '.join(present)}")
 
 
+def _api(token: str, *args: str) -> subprocess.CompletedProcess[str]:
+    """`gh api` as the owner of WINGET_TOKEN, whose fork WingetCreate submits from."""
+    return run(["gh", "api", *args], check=False, capture=True, env={"GH_TOKEN": token})
+
+
+def sync_fork(token: str, repo: str) -> None:
+    """Bring the token owner's fork of winget-pkgs up to date before WingetCreate submits from it.
+
+    WingetCreate syncs the fork through the same API, but when GitHub refuses, it says only
+    that the fork couldn't be synced. GitHub refuses whenever winget-pkgs has changed its own
+    workflows since the fork's last sync and the token lacks the `workflow` scope. Syncing
+    first lets the job say why, and leaves WingetCreate nothing to sync.
+    """
+    user = _api(token, "user", "--jq", ".login")
+    if user.returncode != 0:
+        raise Failure(f"WINGET_TOKEN can't sign in to GitHub: {_reason(user)}")
+    fork = f"{user.stdout.strip()}/winget-pkgs"
+    found = _api(token, f"repos/{fork}", "--jq", ".default_branch")
+    if found.returncode != 0:
+        if _not_found(found):
+            say(f"{fork} doesn't exist yet; WingetCreate creates it when it submits")
+            return
+        raise Failure(f"couldn't read {fork}: {_reason(found)}")
+    # WingetCreate syncs the fork's default branch, so that's the one to bring up to date.
+    branch = found.stdout.strip()
+    result = _api(token, "--method", "POST", f"repos/{fork}/merge-upstream", "-f", f"branch={branch}")
+    if result.returncode != 0:
+        reason = _reason(result)
+        by_hand = (
+            f"sync the fork by hand (gh repo sync {fork} --branch {branch}), "
+            f"then run: gh workflow run playbook.yml --ref main --repo {repo}"
+        )
+        if WORKFLOW_REFUSAL.search(result.stdout + result.stderr):
+            advice = (
+                f"{UPSTREAM} changed its own workflows since the fork was last synced, and GitHub brings those "
+                "into a fork only for a token with the workflow scope. Add that scope to WINGET_TOKEN "
+                f"(https://github.com/settings/tokens) or {by_hand}"
+            )
+        else:
+            advice = f"To submit this release, {by_hand}"
+        raise Failure(f"couldn't sync {fork} with {UPSTREAM}: {reason}\n{advice}")
+    merge = json.loads(result.stdout).get("merge_type")
+    if merge == "none":
+        say(f"{fork} was already in sync with {UPSTREAM}")
+    else:
+        say(f"synced {fork} with {UPSTREAM} ({merge})")
+
+
 def submit(root: Path, config: Config, version: str) -> None:
     release = config.release
     assert release is not None
@@ -156,6 +217,7 @@ def submit(root: Path, config: Config, version: str) -> None:
     if not urls:
         raise Failure(f"none of this release's Windows files match {package_id}'s manifest")
 
+    sync_fork(token, repo)
     with tempfile.TemporaryDirectory(prefix="playbook-winget-") as temp:
         tool = Path(temp) / "wingetcreate.exe"
         with urllib.request.urlopen(WINGETCREATE_URL) as response:
